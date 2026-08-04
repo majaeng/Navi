@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
+  <meta name="mrbd-web-app-capable" content="yes">
+  <title>중한 실시간 번역</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 600px; height: 600px;
+      background: #000; color: #fff; overflow: hidden;
+      font-family: -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+    }
+
+    /* ── 메인 화면 ── */
+    #app {
+      width: 600px; height: 600px;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      position: relative; padding: 30px 28px;
+    }
+
+    /* 상태 표시 (상단) */
+    .status-pill {
+      position: absolute; top: 24px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 50px; padding: 7px 16px;
+    }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #555; transition: background 300ms;
+    }
+    .status-dot.listening { background: #4a9eff; animation: blink 1.2s infinite; }
+    .status-dot.translating { background: #7dff9a; }
+    .status-text { font-size: 12px; color: rgba(255,255,255,0.6); }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.3; }
+    }
+
+    /* 번역 결과 영역 (중앙) */
+    .translation-area {
+      width: 100%; display: flex; flex-direction: column;
+      align-items: center; gap: 16px; text-align: center;
+    }
+
+    /* 원문 중국어 */
+    .original-text {
+      font-size: 16px; color: rgba(255,255,255,0.38);
+      line-height: 1.5; min-height: 24px;
+      max-width: 520px; word-break: break-all;
+      transition: opacity 300ms;
+    }
+
+    /* 번역 한국어 (메인) */
+    .translated-text {
+      font-size: 28px; font-weight: 700; color: #fff;
+      line-height: 1.45; min-height: 42px;
+      max-width: 540px; word-break: keep-all;
+      text-shadow: 0 0 30px rgba(255,255,255,0.15);
+      transition: all 300ms;
+    }
+    .translated-text.empty { color: rgba(255,255,255,0.15); font-weight: 400; font-size: 18px; }
+
+    /* 이전 번역 (위에 희미하게) */
+    .prev-text {
+      font-size: 17px; color: rgba(255,255,255,0.22);
+      line-height: 1.5; max-width: 520px; word-break: keep-all;
+      min-height: 26px;
+    }
+
+    /* 하단 컨트롤 */
+    .bottom-bar {
+      position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%);
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
+    }
+    .mic-btn {
+      width: 64px; height: 64px; border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.05);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 26px; cursor: pointer; transition: all 200ms;
+    }
+    .mic-btn.active {
+      background: rgba(74,158,255,0.25);
+      border-color: #4a9eff;
+      box-shadow: 0 0 20px rgba(74,158,255,0.4);
+    }
+    .hint { font-size: 11px; color: rgba(255,255,255,0.25); }
+
+    /* 에러 토스트 */
+    .toast {
+      position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
+      background: rgba(255,80,80,0.85); border-radius: 20px;
+      padding: 8px 18px; font-size: 12px; color: #fff;
+      opacity: 0; transition: opacity 300ms; pointer-events: none;
+    }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- 상태 표시 -->
+  <div class="status-pill">
+    <div class="status-dot" id="status-dot"></div>
+    <span class="status-text" id="status-text">Enter로 시작</span>
+  </div>
+
+  <!-- 번역 영역 -->
+  <div class="translation-area">
+    <div class="prev-text" id="prev-text"></div>
+    <div class="original-text" id="original-text"></div>
+    <div class="translated-text empty" id="translated-text">중국어를 말하면 번역됩니다</div>
+  </div>
+
+  <!-- 마이크 버튼 -->
+  <div class="bottom-bar">
+    <button class="mic-btn" id="mic-btn" onclick="toggleListen()">🎤</button>
+    <span class="hint">Enter / 탭 → 시작·정지</span>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+  const PAPAGO_PROXY = 'https://papago-proxy.majaeng.workers.dev';
+
+  let recognition = null;
+  let isListening = false;
+  let translateTimer = null;
+  let lastOriginal = '';
+  let lastTranslated = '';
+
+  // ── UI 참조 ──
+  const $dot    = document.getElementById('status-dot');
+  const $status = document.getElementById('status-text');
+  const $orig   = document.getElementById('original-text');
+  const $trans  = document.getElementById('translated-text');
+  const $prev   = document.getElementById('prev-text');
+  const $btn    = document.getElementById('mic-btn');
+  const $toast  = document.getElementById('toast');
+
+  // ── 상태 업데이트 ──
+  function setStatus(state, text) {
+    $dot.className = 'status-dot' + (state ? ' ' + state : '');
+    $status.textContent = text;
+  }
+
+  function showToast(msg) {
+    $toast.textContent = msg;
+    $toast.classList.add('show');
+    setTimeout(() => $toast.classList.remove('show'), 3000);
+  }
+
+  // ── 번역 (파파고) ──
+  async function translate(text) {
+    if (!text.trim()) return;
+    setStatus('translating', '번역 중...');
+    try {
+      const res = await fetch(PAPAGO_PROXY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `source=zh-CN&target=ko&text=${encodeURIComponent(text)}`,
+      });
+      const data = await res.json();
+      const translated = data?.message?.result?.translatedText;
+      if (translated) {
+        if (lastTranslated) $prev.textContent = lastTranslated;
+        lastTranslated = translated;
+        $trans.textContent = translated;
+        $trans.classList.remove('empty');
+      }
+    } catch(e) {
+      showToast('번역 오류 - 네트워크 확인');
+    }
+    if (isListening) setStatus('listening', '듣는 중...');
+  }
+
+  // ── 음성 인식 ──
+  function initRecognition() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { showToast('이 브라우저는 음성인식 미지원 (Chrome 필요)'); return null; }
+
+    const r = new SR();
+    r.lang = 'zh-CN';         // 중국어 인식
+    r.continuous = true;       // 계속 듣기
+    r.interimResults = true;   // 중간 결과도 받기
+    r.maxAlternatives = 1;
+
+    r.onstart = () => {
+      isListening = true;
+      setStatus('listening', '듣는 중...');
+      $btn.classList.add('active');
+      $btn.textContent = '⏹';
+    };
+
+    r.onresult = (e) => {
+      let interim = '';
+      let final = '';
+
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) final += t;
+        else interim += t;
+      }
+
+      // 중간 결과: 원문 표시
+      const current = final || interim;
+      if (current) $orig.textContent = current;
+
+      // 최종 결과: 번역
+      if (final) {
+        lastOriginal = final;
+        clearTimeout(translateTimer);
+        translate(final);
+      } else if (interim) {
+        // 중간결과는 1.5초 멈추면 번역
+        clearTimeout(translateTimer);
+        translateTimer = setTimeout(() => translate(interim), 1500);
+      }
+    };
+
+    r.onerror = (e) => {
+      if (e.error === 'no-speech') return;
+      if (e.error === 'not-allowed') { showToast('마이크 권한을 허용해주세요'); return; }
+      showToast('인식 오류: ' + e.error);
+    };
+
+    r.onend = () => {
+      // 듣기 중이면 자동 재시작
+      if (isListening) {
+        try { r.start(); } catch(e) {}
+      } else {
+        $btn.classList.remove('active');
+        $btn.textContent = '🎤';
+        setStatus('', 'Enter로 시작');
+      }
+    };
+
+    return r;
+  }
+
+  // ── 시작/정지 ──
+  function toggleListen() {
+    if (isListening) {
+      isListening = false;
+      recognition?.stop();
+    } else {
+      if (!recognition) recognition = initRecognition();
+      if (!recognition) return;
+      try {
+        recognition.start();
+      } catch(e) {
+        // 이미 실행 중
+      }
+    }
+  }
+
+  // ── 뉴럴밴드 (키보드) ──
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      toggleListen();
+      e.preventDefault();
+    }
+    // ESC: 초기화
+    if (e.key === 'Escape') {
+      isListening = false;
+      recognition?.stop();
+      $orig.textContent = '';
+      $trans.textContent = '중국어를 말하면 번역됩니다';
+      $trans.classList.add('empty');
+      $prev.textContent = '';
+      lastTranslated = '';
+      e.preventDefault();
+    }
+  });
+</script>
+</body>
+</html>
