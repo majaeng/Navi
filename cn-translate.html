@@ -91,6 +91,19 @@
     }
     .hint { font-size: 11px; color: rgba(255,255,255,0.25); }
 
+    /* 환율 뱃지 */
+    .currency-badge {
+      display: none; align-items: center; gap: 10px;
+      background: rgba(255,200,50,0.10);
+      border: 1px solid rgba(255,200,50,0.28);
+      border-radius: 50px; padding: 8px 20px;
+      transition: opacity 400ms;
+    }
+    .currency-badge.show { display: flex; }
+    .currency-cny { font-size: 13px; color: rgba(255,200,50,0.55); }
+    .currency-arrow { font-size: 11px; color: rgba(255,255,255,0.2); }
+    .currency-krw { font-size: 18px; font-weight: 700; color: rgba(255,200,50,0.95); }
+
     /* 에러 토스트 */
     .toast {
       position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
@@ -115,6 +128,11 @@
     <div class="prev-text" id="prev-text"></div>
     <div class="original-text" id="original-text"></div>
     <div class="translated-text empty" id="translated-text">중국어를 말하면 번역됩니다</div>
+    <div class="currency-badge" id="currency-badge">
+      <span class="currency-cny" id="currency-cny"></span>
+      <span class="currency-arrow">→</span>
+      <span class="currency-krw" id="currency-krw"></span>
+    </div>
   </div>
 
   <!-- 마이크 버튼 -->
@@ -128,12 +146,68 @@
 
 <script>
   const PAPAGO_PROXY = 'https://papago-proxy.majaeng.workers.dev';
+  const ER_API = 'https://open.er-api.com/v6/latest/CNY';
 
   let recognition = null;
   let isListening = false;
   let translateTimer = null;
   let lastOriginal = '';
   let lastTranslated = '';
+  let cnyToKrw = null; // 환율 캐시
+
+  // ── 환율 로드 (앱 시작시 1회) ──
+  async function loadRate() {
+    try {
+      const res = await fetch(ER_API);
+      const data = await res.json();
+      cnyToKrw = data?.rates?.KRW;
+    } catch(e) {}
+  }
+  loadRate();
+
+  // ── 환율 변환 ──
+  // 중국어 숫자 단위 파싱 (万=10000, 千=1000, 百=100, 十=10)
+  const CN_NUM = {'零':0,'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'两':2};
+  const CN_UNIT = {'十':10,'百':100,'千':1000,'万':10000,'亿':100000000};
+
+  function parseChinese(s) {
+    let result = 0, cur = 0, tmp = 0;
+    for (const c of s) {
+      if (CN_NUM[c] !== undefined) { tmp = CN_NUM[c]; }
+      else if (CN_UNIT[c] !== undefined) {
+        const u = CN_UNIT[c];
+        if (u >= 10000) { result = (result + cur + tmp) * u; cur = 0; tmp = 0; }
+        else { cur += (tmp || 1) * u; tmp = 0; }
+      }
+    }
+    return result + cur + tmp;
+  }
+
+  function detectAmount(text) {
+    // 아라비아 숫자 + 위안 단위
+    const arabicMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:块|元|人民币|块钱|元钱)/);
+    if (arabicMatch) return parseFloat(arabicMatch[1]);
+
+    // 한자 숫자 + 위안 단위
+    const cnMatch = text.match(/([零一二三四五六七八九两十百千万亿]+)\s*(?:块|元|人民币|块钱|元钱)/);
+    if (cnMatch) {
+      const val = parseChinese(cnMatch[1]);
+      if (val > 0) return val;
+    }
+    return null;
+  }
+
+  function showCurrency(cny) {
+    if (!cnyToKrw || !cny) { hideCurrency(); return; }
+    const krw = Math.round(cny * cnyToKrw);
+    document.getElementById('currency-cny').textContent = `¥${cny.toLocaleString()} 위안`;
+    document.getElementById('currency-krw').textContent = `${krw.toLocaleString()}원`;
+    document.getElementById('currency-badge').classList.add('show');
+  }
+
+  function hideCurrency() {
+    document.getElementById('currency-badge').classList.remove('show');
+  }
 
   // ── UI 참조 ──
   const $dot    = document.getElementById('status-dot');
@@ -173,6 +247,10 @@
         lastTranslated = translated;
         $trans.textContent = translated;
         $trans.classList.remove('empty');
+
+        // 금액 감지 → 환율 뱃지
+        const amount = detectAmount(text);
+        amount ? showCurrency(amount) : hideCurrency();
       }
     } catch(e) {
       showToast('번역 오류 - 네트워크 확인');
@@ -275,6 +353,7 @@
       $trans.classList.add('empty');
       $prev.textContent = '';
       lastTranslated = '';
+      hideCurrency();
       e.preventDefault();
     }
   });
