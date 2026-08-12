@@ -357,7 +357,9 @@
   const canvas = document.getElementById('ar-canvas');
   const ctx = canvas.getContext('2d');
 
-  let mapView = { centerLat: 0, centerLng: 0, zoom: 16 };
+  let mapView = { centerLat: 0, centerLng: 0, zoom: 16, pitch: 0 };
+  let pitchTarget = 0;              // 0 = 탑뷰, 1 = 쿼터뷰
+  const PITCH_K = 0.0022;           // 원근 압축 강도
   const ZOOM_MIN = 13, ZOOM_MAX = 18;
   const TILE_SIZE = 256;
   const vtCache = {};       // key -> [{props, geom}] 도로 피처 배열
@@ -510,9 +512,11 @@
           for (const ring of geom) {
             let first = true;
             for (const {x, y} of ring) {
-              const sx = (tx + x / EXTENT - cx) * TILE_SIZE + POS_X;
-              const sy = (ty + y / EXTENT - cy) * TILE_SIZE + POS_Y;
-              first ? ctx.moveTo(sx, sy) : ctx.lineTo(sx, sy);
+              const fx = (tx + x / EXTENT - cx) * TILE_SIZE + POS_X;
+              const fy = (ty + y / EXTENT - cy) * TILE_SIZE + POS_Y;
+              const p = proj(fx, fy);
+              if (!p.ok) { first = true; continue; }   // 지평선 너머는 끊기
+              first ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
               first = false;
             }
           }
@@ -781,6 +785,10 @@
     mapView.centerLat = currentPos.lat;
     mapView.centerLng = currentPos.lng;
     mapView.zoom = 16;
+    // 탑뷰로 시작 → 경로 표시 후 쿼터뷰로 기울임
+    mapView.pitch = 0;
+    pitchTarget = 0;
+    setTimeout(() => { pitchTarget = 1; }, 900);
 
     fetchOSRMRoute(currentPos, dest).then(route => {
       if (route) {
@@ -852,11 +860,28 @@
     return { tx, ty };
   }
 
+  // ── 원근 투영 (탑뷰 → 쿼터뷰) ──
+  // 현재 위치(POS_X, POS_Y)를 기준점으로, 앞쪽(위)일수록 압축·수렴
+  function proj(x, y) {
+    const p = mapView.pitch;
+    if (p < 0.005) return { x, y, ok: true };
+    const d = POS_Y - y;                  // 앞쪽 거리 (양수 = 전방)
+    const denom = 1 + d * PITCH_K * p;
+    if (denom < 0.15) return { x, y, ok: false };  // 지평선 너머 = 클립
+    return {
+      x: POS_X + (x - POS_X) / denom,
+      y: POS_Y - d / denom,
+      ok: true,
+    };
+  }
+
   function latLngToPixel(lat, lng) {
     const { tx: cx, ty: cy } = latLngToTilePixel(mapView.centerLat, mapView.centerLng, mapView.zoom);
     const { tx, ty } = latLngToTilePixel(lat, lng, mapView.zoom);
     // 현재위치가 POS_X, POS_Y (하단 1/3)에 오도록 오프셋
-    return { x: (tx - cx) * TILE_SIZE + POS_X, y: (ty - cy) * TILE_SIZE + POS_Y };
+    const fx = (tx - cx) * TILE_SIZE + POS_X;
+    const fy = (ty - cy) * TILE_SIZE + POS_Y;
+    return proj(fx, fy);
   }
 
   // ── 렌더 루프 ──
@@ -864,6 +889,12 @@
     if (animFrame) cancelAnimationFrame(animFrame);
     function loop() {
       pulsePhase = (pulsePhase + 0.025) % 1;
+      // 카메라 각도 부드럽게 전환 (탑뷰 → 쿼터뷰)
+      if (Math.abs(mapView.pitch - pitchTarget) > 0.001) {
+        mapView.pitch += (pitchTarget - mapView.pitch) * 0.045;
+      } else {
+        mapView.pitch = pitchTarget;
+      }
       renderMap();
       animFrame = requestAnimationFrame(loop);
     }
@@ -889,9 +920,12 @@
       ctx.beginPath();
       ctx.strokeStyle = 'rgba(74,158,255,0.18)';
       ctx.lineWidth = 9; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      routeCoords.forEach((pt, i) => {
-        const { x, y } = latLngToPixel(pt.lat, pt.lng);
-        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      let started = false;
+      routeCoords.forEach(pt => {
+        const p = latLngToPixel(pt.lat, pt.lng);
+        if (!p.ok) { started = false; return; }
+        started ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+        started = true;
       });
       ctx.stroke();
 
@@ -900,9 +934,12 @@
       ctx.strokeStyle = '#4a9eff';
       ctx.lineWidth = 4; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
       ctx.shadowColor = 'rgba(74,158,255,0.9)'; ctx.shadowBlur = 8;
-      routeCoords.forEach((pt, i) => {
-        const { x, y } = latLngToPixel(pt.lat, pt.lng);
-        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      started = false;
+      routeCoords.forEach(pt => {
+        const p = latLngToPixel(pt.lat, pt.lng);
+        if (!p.ok) { started = false; return; }
+        started ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+        started = true;
       });
       ctx.stroke();
       ctx.shadowBlur = 0;
@@ -1178,6 +1215,11 @@
       if (e.key === 'Escape' || e.key === 'ArrowLeft') { stopNav(); showScreen('screen-home'); focusHome(focusIndex); e.preventDefault(); }
       else if (e.key === '+' || e.key === '=') { zoomIn(); e.preventDefault(); }
       else if (e.key === '-') { zoomOut(); e.preventDefault(); }
+      // 시점 전환: 탑뷰 ↔ 쿼터뷰
+      else if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter') {
+        pitchTarget = pitchTarget > 0.5 ? 0 : 1;
+        e.preventDefault();
+      }
     }
   });
 
