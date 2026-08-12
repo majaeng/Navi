@@ -357,6 +357,9 @@
   const canvas = document.getElementById('ar-canvas');
   const ctx = canvas.getContext('2d');
 
+  let voiceOn = true;               // 음성 안내 on/off
+  let spokenDistBucket = null;      // 현재 스텝에서 안내한 거리 구간
+  let isRerouting = false;          // 재경로 계산 중 플래그
   let mapView = { centerLat: 0, centerLng: 0, zoom: 16, pitch: 0 };
   let pitchTarget = 0;              // 0 = 탑뷰, 1 = 쿼터뷰
   const PITCH_K = 0.0022;           // 원근 압축 강도
@@ -802,6 +805,7 @@
         // 경로 캐시 저장
         cacheRoute(dest, routeCoords, routeSteps);
         updateStepUI(routeSteps[0]);
+        speak(`${dest.name}까지 ${distKm}킬로미터, 약 ${etaMin}분 소요됩니다. 안내를 시작합니다`);
         // 경로 전체가 보이도록 줌 자동 조정
         fitRouteBounds();
       }
@@ -1089,6 +1093,7 @@
       const remaining = getDistanceKm(currentPos.lat, currentPos.lng, dest.lat, dest.lng);
       if (remaining < 0.03) {
         navigator.geolocation.clearWatch(watchId);
+        speak('목적지에 도착했습니다');
         document.getElementById('turn-arrow').textContent = '🏁';
         document.getElementById('turn-dist').textContent = '도착!';
         document.getElementById('turn-text').textContent = dest.name;
@@ -1111,24 +1116,26 @@
         } else {
           document.getElementById('turn-dist').textContent =
             d < 1 ? `${Math.round(d*1000)}m` : `${d.toFixed(1)}km`;
+          announceTurn(next, d);   // 200m / 50m / 즉시 음성 안내
         }
       }
 
-      // 경로 이탈 감지 (50m 이상 벗어나면 재경로)
+      // 경로 이탈 감지 (30m 이상 벗어나면 즉시 재경로)
       const offRoute = distToRoute(currentPos.lat, currentPos.lng);
-      if (offRoute > 0.05 && routeCoords.length > 1) {
-        clearTimeout(rerouteTimer);
-        rerouteTimer = setTimeout(() => {
-          document.getElementById('turn-dist').textContent = '재경로...';
-          fetchOSRMRoute(currentPos, dest).then(route => {
-            if (route) {
-              routeCoords = route.geometry.coordinates.map(([lng, lat]) => ({ lat, lng }));
-              routeSteps = route.legs[0].steps;
-              currentStepIndex = 0;
-              updateStepUI(routeSteps[0]);
-            }
-          });
-        }, 3000);
+      if (offRoute > 0.03 && routeCoords.length > 1 && !isRerouting) {
+        isRerouting = true;
+        document.getElementById('turn-dist').textContent = '재경로...';
+        speak('경로를 다시 탐색합니다');
+        fetchOSRMRoute(currentPos, dest).then(route => {
+          if (route) {
+            routeCoords = route.geometry.coordinates.map(([lng, lat]) => ({ lat, lng }));
+            routeSteps = route.legs[0].steps;
+            currentStepIndex = 0;
+            spokenDistBucket = null;
+            updateStepUI(routeSteps[0]);
+          }
+          isRerouting = false;
+        }).catch(() => { isRerouting = false; });
       }
     }, err => {
       console.warn(err.message);
@@ -1139,7 +1146,10 @@
   function stopNav() {
     if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
     clearTimeout(rerouteTimer);
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
     stopRenderLoop();
+    isRerouting = false; spokenDistBucket = null;
+    mapView.pitch = 0; pitchTarget = 0;
     routeCoords = []; routeSteps = []; selectedDest = null; currentHeading = null;
   }
 
@@ -1149,6 +1159,52 @@
     document.getElementById('turn-arrow').textContent = getStepArrow(step);
     document.getElementById('turn-text').textContent = getStepText(step);
     document.getElementById('turn-dist').textContent = '--';
+    spokenDistBucket = null;   // 새 스텝 → 안내 버킷 초기화
+  }
+
+  // ── 음성 안내 (TTS) ──
+  function speak(text) {
+    if (!voiceOn || !('speechSynthesis' in window)) return;
+    try {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'ko-KR';
+      u.rate = 1.05;
+      u.volume = 1;
+      speechSynthesis.speak(u);
+    } catch(e) {}
+  }
+
+  // 회전 동작을 음성용 문구로
+  function getStepVoice(step) {
+    const type = step.maneuver.type, mod = step.maneuver.modifier || '';
+    if (type === 'arrive') return '목적지에 도착했습니다';
+    if (type === 'depart') return '안내를 시작합니다';
+    if (mod === 'left') return '좌회전하세요';
+    if (mod === 'right') return '우회전하세요';
+    if (mod === 'slight left') return '좌측 방향입니다';
+    if (mod === 'slight right') return '우측 방향입니다';
+    if (mod === 'sharp left') return '왼쪽으로 크게 도세요';
+    if (mod === 'sharp right') return '오른쪽으로 크게 도세요';
+    if (mod === 'uturn') return '유턴하세요';
+    return '직진하세요';
+  }
+
+  // 거리별 사전 안내 (200m / 50m / 즉시)
+  function announceTurn(step, distKm) {
+    if (!step) return;
+    const m = distKm * 1000;
+    let bucket = null;
+    if (m <= 20) bucket = 'now';
+    else if (m <= 50) bucket = '50';
+    else if (m <= 200) bucket = '200';
+    if (!bucket || bucket === spokenDistBucket) return;
+    spokenDistBucket = bucket;
+
+    const action = getStepVoice(step);
+    if (bucket === 'now')      speak(action);
+    else if (bucket === '50')  speak('50미터 앞 ' + action);
+    else                       speak('200미터 앞 ' + action);
   }
   function getStepText(step) {
     const type = step.maneuver.type, mod = step.maneuver.modifier || '', name = step.name || '';
@@ -1218,6 +1274,17 @@
       // 시점 전환: 탑뷰 ↔ 쿼터뷰
       else if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter') {
         pitchTarget = pitchTarget > 0.5 ? 0 : 1;
+        e.preventDefault();
+      }
+      // 음성 안내 on/off
+      else if (e.key === 'ArrowRight') {
+        voiceOn = !voiceOn;
+        if (!voiceOn && 'speechSynthesis' in window) speechSynthesis.cancel();
+        document.getElementById('turn-text').textContent = voiceOn ? '🔊 음성 안내 켜짐' : '🔇 음성 안내 꺼짐';
+        if (voiceOn) speak('음성 안내를 켭니다');
+        setTimeout(() => {
+          if (routeSteps[currentStepIndex]) updateStepUI(routeSteps[currentStepIndex]);
+        }, 1500);
         e.preventDefault();
       }
     }
