@@ -133,7 +133,7 @@
 <div id="app">
 
   <!-- STT 엔진 표시 -->
-  <div class="engine-pill hq" id="engine-pill">고정밀</div>
+  <div class="engine-pill hq" id="engine-pill">讯飞</div>
 
   <!-- 상태 표시 -->
   <div class="status-pill">
@@ -173,8 +173,18 @@
   const AAI_MODEL = 'universal-3-5-pro';   // 중국어(Mandarin) 지원 모델
   const SAMPLE_RATE = 16000;
 
-  // 기본은 고정밀(AssemblyAI). 실패 시에만 자동으로 'browser' 폴백
-  let sttMode = 'aai';
+  // ── iFlytek 인증 프록시 (메인 엔진) ──
+  // ⚠️ 아직 미설정: Worker 만든 뒤 아래 주소를 채우면 활성화됨
+  const IFLYTEK_AUTH_PROXY = '';   // 예: 'https://iflytek-auth.majaeng.workers.dev'
+
+  // 엔진 우선순위: iflytek → aai → browser (앞이 실패하면 다음으로)
+  let sttMode = 'iflytek';
+  let flySocket = null;
+  let flyFirstFrame = true;
+  let flySlices = [];              // wpgs 스트리밍 결과 조각들
+  let flyQueue = [];               // 전송 대기 오디오
+  let flyPacer = null;             // 40ms 페이싱 타이머
+  const FLY_FRAME_BYTES = 1280;    // iFlytek 규격
   let aaiSocket = null;
   let audioCtx = null;
   let mediaStream = null;
@@ -356,21 +366,155 @@
   }
 
   // ══════════════════════════════════════════
-  //  AssemblyAI 스트리밍 STT (고정밀 모드)
+  //  iFlytek 실시간 음성인식 (메인 엔진)
+  //  중국어·사투리에 강하고 중국 내에서 빠름
+  // ══════════════════════════════════════════
+  async function startFlytek() {
+    if (!IFLYTEK_AUTH_PROXY) return fallbackTo('aai', null);
+
+    // 1) Worker에서 서명된 접속 URL 받기
+    let wsUrl, appId;
+    setStatus('translating', '연결 중...');
+    try {
+      const res = await fetch(IFLYTEK_AUTH_PROXY);
+      const data = await res.json();
+      wsUrl = data?.url; appId = data?.app_id;
+      if (!wsUrl || !appId) throw new Error('no url');
+    } catch(e) {
+      return fallbackTo('aai', '인식 서버 연결 실패');
+    }
+
+    // 2) 마이크 확보
+    if (!(await openMic())) return false;
+
+    // 3) WebSocket 연결
+    flySocket = new WebSocket(wsUrl);
+    flyFirstFrame = true;
+    flySlices = [];
+
+    flySocket.onopen = () => {
+      isListening = true;
+      setStatus('listening', '듣는 중...');
+      $btn.classList.add('active');
+      $btn.textContent = '⏹';
+      pipeAudio(sendFlytekChunk, appId);
+    };
+
+    flySocket.onmessage = ev => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.code !== 0) { showToast('인식 오류 ' + msg.code); return; }
+      handleFlytekResult(msg.data);
+    };
+
+    flySocket.onerror = () => {};
+
+    flySocket.onclose = () => {
+      if (isListening) { stopFlytek(); fallbackTo('aai', '세션 종료'); }
+    };
+
+    return true;
+  }
+
+  // 오디오 청크 → base64 → JSON 프레임 전송
+  function sendFlytekChunk(pcmBuffer, appId) {
+    if (!flySocket || flySocket.readyState !== WebSocket.OPEN) return;
+
+    const bytes = new Uint8Array(pcmBuffer);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    const audio = btoa(bin);
+
+    const frame = {
+      data: {
+        status: flyFirstFrame ? 0 : 1,     // 0=첫프레임, 1=중간
+        format: 'audio/L16;rate=16000',
+        encoding: 'raw',
+        audio,
+      }
+    };
+
+    // 첫 프레임에만 공통/비즈니스 파라미터 포함
+    if (flyFirstFrame) {
+      frame.common = { app_id: appId };
+      frame.business = {
+        language: 'zh_cn',
+        domain: 'ist_open',
+        accent: 'mandarin',   // 쓰촨 등 방언도 이 엔진이 흡수함
+        dwa: 'wpgs',          // 스트리밍 중간결과 활성화
+        punc: 1,
+        nunum: 1,
+      };
+      flyFirstFrame = false;
+    }
+
+    flySocket.send(JSON.stringify(frame));
+  }
+
+  // wpgs 스트리밍 결과 조립 (apd=이어붙임, rpl=구간교체)
+  function handleFlytekResult(data) {
+    const r = data?.result;
+    if (!r) return;
+
+    // 이번 조각의 텍스트
+    let piece = '';
+    for (const w of (r.ws || [])) {
+      for (const c of (w.cw || [])) piece += c.w;
+    }
+
+    if (r.pgs === 'rpl' && Array.isArray(r.rg)) {
+      // rg 구간을 잘라내고 교체
+      for (let i = r.rg[0]; i <= r.rg[1]; i++) flySlices[i] = '';
+    }
+    flySlices[r.sn] = piece;
+
+    const text = flySlices.join('').trim();
+    if (!text) return;
+
+    $orig.textContent = text;
+
+    // 문장이 끝났으면(ls=true 또는 status=2) 번역
+    if (r.ls || data.status === 2) {
+      if (text.length > 1) translate(text);
+      flySlices = [];
+    }
+  }
+
+  function stopFlytek() {
+    isListening = false;
+
+    // 종료 프레임 (status=2)
+    if (flySocket && flySocket.readyState === WebSocket.OPEN) {
+      try {
+        flySocket.send(JSON.stringify({
+          data: { status: 2, format: 'audio/L16;rate=16000', encoding: 'raw', audio: '' }
+        }));
+      } catch {}
+    }
+    setTimeout(() => { try { flySocket?.close(1000); } catch {} flySocket = null; }, 300);
+
+    closeMic();
+    flySlices = [];
+    $btn.classList.remove('active');
+    $btn.textContent = '🎤';
+    setStatus('', 'Enter로 시작');
+  }
+
+  // ══════════════════════════════════════════
+  //  AssemblyAI 스트리밍 STT (폴백 1)
   //  마이크 → PCM 16kHz → WebSocket → 실시간 텍스트
   // ══════════════════════════════════════════
-  // 고정밀 실패 → 무료 엔진으로 자동 전환 후 계속 진행
-  function fallbackToBrowser(reason) {
-    showToast(reason + ' - 일반 모드로 전환');
-    setSttMode('browser');
+  // 엔진 실패 → 다음 순위 엔진으로 자동 전환 후 계속 진행
+  // iflytek → aai → browser
+  function fallbackTo(nextMode, reason) {
+    if (reason) showToast(reason + ' - 엔진 전환');
+    setSttMode(nextMode);
     setTimeout(() => { if (!isListening) toggleListen(); }, 400);
+    return false;
   }
 
   async function startAAI() {
-    if (!AAI_TOKEN_PROXY) {
-      fallbackToBrowser('고정밀 미설정');
-      return false;
-    }
+    if (!AAI_TOKEN_PROXY) return fallbackTo('browser', null);
 
     // 1) 임시 토큰 발급 (API 키는 Worker에만 존재)
     let token;
@@ -381,25 +525,11 @@
       token = data?.token;
       if (!token) throw new Error('no token');
     } catch(e) {
-      fallbackToBrowser('인식 서버 연결 실패');
-      return false;
+      return fallbackTo('browser', '인식 서버 연결 실패');
     }
 
     // 2) 마이크 확보
-    try {
-      mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-        }
-      });
-    } catch(e) {
-      showToast('마이크 권한을 허용해주세요');
-      setStatus('', 'Enter로 시작');
-      return false;
-    }
+    if (!(await openMic())) return false;
 
     // 3) WebSocket 연결
     const params = new URLSearchParams({
@@ -412,10 +542,12 @@
 
     aaiSocket.onopen = () => {
       isListening = true;
-      setStatus('listening', '듣는 중... (고정밀)');
+      setStatus('listening', '듣는 중...');
       $btn.classList.add('active');
       $btn.textContent = '⏹';
-      pipeAudio();
+      pipeAudio(buf => {
+        if (aaiSocket?.readyState === WebSocket.OPEN) aaiSocket.send(buf);
+      });
     };
 
     aaiSocket.onmessage = ev => {
@@ -441,21 +573,55 @@
       // 듣는 중에 끊겼다면 무료 엔진으로 자동 폴백
       if (isListening) {
         stopAAI();
-        fallbackToBrowser('고정밀 세션 종료');
+        fallbackTo('browser', '세션 종료');
       }
     };
 
     return true;
   }
 
-  // 마이크 오디오를 16kHz PCM으로 변환해 전송
-  function pipeAudio() {
+  // ══════════════════════════════════════════
+  //  공용 마이크 파이프라인 (두 엔진이 함께 사용)
+  // ══════════════════════════════════════════
+  async function openMic() {
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        }
+      });
+      return true;
+    } catch(e) {
+      showToast('마이크 권한을 허용해주세요');
+      setStatus('', 'Enter로 시작');
+      return false;
+    }
+  }
+
+  function closeMic() {
+    clearInterval(flyPacer); flyPacer = null;
+    flyQueue = [];
+    procNode?.disconnect(); srcNode?.disconnect();
+    audioCtx?.close().catch(() => {});
+    procNode = null; srcNode = null; audioCtx = null;
+    mediaStream?.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+  }
+
+  // 마이크 → 16kHz Int16 PCM → onChunk(ArrayBuffer)
+  // extra 가 주어지면(iFlytek) 40ms/1280B 페이싱으로 나눠 보냄
+  function pipeAudio(onChunk, extra) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SAMPLE_RATE });
     srcNode = audioCtx.createMediaStreamSource(mediaStream);
     procNode = audioCtx.createScriptProcessor(4096, 1, 1);
 
+    const paced = extra !== undefined;
+
     procNode.onaudioprocess = e => {
-      if (!aaiSocket || aaiSocket.readyState !== WebSocket.OPEN) return;
+      if (!isListening) return;
       const input = e.inputBuffer.getChannelData(0);
       // Float32 (-1~1) → Int16 PCM
       const pcm = new Int16Array(input.length);
@@ -463,8 +629,28 @@
         const s = Math.max(-1, Math.min(1, input[i]));
         pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
       }
-      aaiSocket.send(pcm.buffer);
+      if (paced) {
+        flyQueue.push(new Uint8Array(pcm.buffer));
+      } else {
+        onChunk(pcm.buffer);
+      }
     };
+
+    // iFlytek 규격: 40ms 간격으로 1280바이트씩
+    if (paced) {
+      let carry = new Uint8Array(0);
+      flyPacer = setInterval(() => {
+        while (flyQueue.length && carry.length < FLY_FRAME_BYTES) {
+          const next = flyQueue.shift();
+          const merged = new Uint8Array(carry.length + next.length);
+          merged.set(carry); merged.set(next, carry.length);
+          carry = merged;
+        }
+        if (carry.length < FLY_FRAME_BYTES) return;
+        onChunk(carry.slice(0, FLY_FRAME_BYTES).buffer, extra);
+        carry = carry.slice(FLY_FRAME_BYTES);
+      }, 40);
+    }
 
     srcNode.connect(procNode);
     procNode.connect(audioCtx.destination);
@@ -479,12 +665,7 @@
     }
     setTimeout(() => { try { aaiSocket?.close(); } catch {} aaiSocket = null; }, 300);
 
-    procNode?.disconnect(); srcNode?.disconnect();
-    audioCtx?.close().catch(() => {});
-    procNode = null; srcNode = null; audioCtx = null;
-
-    mediaStream?.getTracks().forEach(t => t.stop());
-    mediaStream = null;
+    closeMic();
 
     $btn.classList.remove('active');
     $btn.textContent = '🎤';
@@ -496,18 +677,16 @@
   function setSttMode(mode) {
     sttMode = mode;
     const $pill = document.getElementById('engine-pill');
-    if (mode === 'aai') {
-      $pill.textContent = '고정밀';
-      $pill.classList.add('hq');
-    } else {
-      $pill.textContent = '일반 (폴백)';
-      $pill.classList.remove('hq');
-    }
+    const label = { iflytek: '讯飞', aai: 'AAI', browser: '일반' }[mode] || mode;
+    $pill.textContent = label;
+    $pill.classList.toggle('hq', mode === 'iflytek');
   }
 
   // ── 시작/정지 (모드에 따라 분기) ──
   function stopListen() {
-    if (sttMode === 'aai') {
+    if (sttMode === 'iflytek') {
+      stopFlytek();
+    } else if (sttMode === 'aai') {
       stopAAI();
     } else {
       isListening = false;
@@ -518,7 +697,9 @@
   function toggleListen() {
     if (isListening) { stopListen(); return; }
 
-    if (sttMode === 'aai') {
+    if (sttMode === 'iflytek') {
+      startFlytek();
+    } else if (sttMode === 'aai') {
       startAAI();
     } else {
       if (!recognition) recognition = initRecognition();
