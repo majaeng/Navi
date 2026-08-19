@@ -184,6 +184,11 @@
   let flySlices = [];              // wpgs 스트리밍 결과 조각들
   let flyCarry = new Uint8Array(0);  // 프레임 경계에 걸친 잔여 바이트
   let flyPending = null;             // 중간결과 번역 디바운스
+  let flyPreroll = [];               // 세션 열리기 직전 음성 보관
+  let flyOpening = false;            // 세션 여는 중 중복 방지
+  let flyQuietSince = 0;
+  const VOICE_THRESHOLD = 0.008;     // 말소리 판정 음량 (멀리서 말해도 잡히게)
+  const PREROLL_CHUNKS = 3;          // 약 0.7초 분량 보관
   let flyReopen = null;            // 세션 재연결 타이머
   let flyRotate = null;            // 60초 만료 전 교대 타이머
   let flyAppId = '';
@@ -507,14 +512,19 @@
     isListening = true;
     $btn.classList.add('active');
     $btn.textContent = '⏹';
+    setStatus('listening', '듣는 중...');
 
-    // 마이크 → 큐 (소켓이 끊겨있어도 계속 쌓임)
+    // 마이크 상시 개방. 말소리가 감지될 때만 세션을 염
+    // (조용할 때 세션을 붙들고 있으면 동시연결 제한·사용량 낭비)
     pipeAudio(sendFlytekChunk, true);
-
-    // 2) 첫 세션 연결
-    const ok = await openFlySession(false);
-    if (!ok) { closeMic(); isListening = false; return false; }
     return true;
+  }
+
+  // 말소리 감지 → 세션이 없으면 열기
+  function onVoiceDetected() {
+    if (flySocket || flyOpening) return;
+    flyOpening = true;
+    openFlySession(false).finally(() => { flyOpening = false; });
   }
 
   // iat는 한 세션당 최대 60초 + 말이 멈추면 자동 종료.
@@ -563,11 +573,9 @@
     sock.onclose = () => {
       if (sock !== flySocket) return;        // 교대로 물러난 이전 세션은 무시
       flySocket = null;
-      // 말이 멈춰서 종료된 경우 → 다음 발화 대기용으로 즉시 재개
-      if (isListening && sttMode === 'iflytek') {
-        clearTimeout(flyReopen);
-        flyReopen = setTimeout(() => { if (isListening) openFlySession(false); }, 120);
-      }
+      flyCarry = new Uint8Array(0);
+      clearTimeout(flyRotate);
+      // 재연결하지 않음 — 다음 말소리가 감지되면 그때 새 세션을 엶
     };
 
     return true;
@@ -697,6 +705,8 @@
   // iflytek → aai → browser
   function fallbackTo(nextMode, reason) {
     if (reason) showToast(reason + ' - 엔진 전환');
+    const wasListening = isListening;
+    if (wasListening) stopListen();          // 현재 엔진 정리
     setSttMode(nextMode);
     setTimeout(() => { if (!isListening) toggleListen(); }, 400);
     return false;
@@ -797,6 +807,8 @@
   function closeMic() {
     clearTimeout(flyPending); flyPending = null;
     flyCarry = new Uint8Array(0);
+    flyPreroll = [];
+    flyOpening = false;
     procNode?.disconnect(); srcNode?.disconnect();
     audioCtx?.close().catch(() => {});
     procNode = null; srcNode = null; audioCtx = null;
@@ -822,21 +834,47 @@
         const s = Math.max(-1, Math.min(1, input[i]));
         pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
       }
-      if (paced) {
-        // 마이크는 이미 실시간 속도로 들어오므로 타이머로 늦추지 않고
-        // 규격 프레임 크기(1280B)로만 쪼개서 즉시 전송
-        const incoming = new Uint8Array(pcm.buffer);
-        const merged = new Uint8Array(flyCarry.length + incoming.length);
-        merged.set(flyCarry); merged.set(incoming, flyCarry.length);
-        let off = 0;
-        while (merged.length - off >= FLY_FRAME_BYTES) {
-          onChunk(merged.slice(off, off + FLY_FRAME_BYTES).buffer);
-          off += FLY_FRAME_BYTES;
-        }
-        flyCarry = merged.slice(off);
-      } else {
-        onChunk(pcm.buffer);
+      if (!paced) { onChunk(pcm.buffer); return; }
+
+      // ── 말소리 감지 (음량 기반) ──
+      let sum = 0;
+      for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+      const rms = Math.sqrt(sum / input.length);
+      if (rms > VOICE_THRESHOLD) {
+        flyQuietSince = 0;
+        onVoiceDetected();
       }
+
+      const incoming = new Uint8Array(pcm.buffer);
+
+      // 세션이 아직 없으면 직전 음성을 잠깐 보관해뒀다가
+      // 세션이 열릴 때 같이 보내 앞부분이 잘리지 않게 함
+      if (!flySocket || flySocket.readyState !== WebSocket.OPEN) {
+        flyPreroll.push(incoming);
+        while (flyPreroll.length > PREROLL_CHUNKS) flyPreroll.shift();
+        return;
+      }
+
+      // 보관해둔 앞부분 먼저 흘려보냄
+      let pending = incoming;
+      if (flyPreroll.length) {
+        const parts = [...flyPreroll, incoming];
+        flyPreroll = [];
+        const total = parts.reduce((n, p) => n + p.length, 0);
+        pending = new Uint8Array(total);
+        let o = 0;
+        for (const p of parts) { pending.set(p, o); o += p.length; }
+      }
+
+      // 규격 프레임 크기(1280B)로 쪼개서 전송
+      const merged = new Uint8Array(flyCarry.length + pending.length);
+      merged.set(flyCarry); merged.set(pending, flyCarry.length);
+      let off = 0;
+      while (merged.length - off >= FLY_FRAME_BYTES) {
+        onChunk(merged.slice(off, off + FLY_FRAME_BYTES).buffer);
+        off += FLY_FRAME_BYTES;
+      }
+      flyCarry = merged.slice(off);
     };
 
     srcNode.connect(procNode);
