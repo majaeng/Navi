@@ -185,6 +185,7 @@
   let flyQueue = [];               // 전송 대기 오디오
   let flyPacer = null;             // 40ms 페이싱 타이머
   let flyReopen = null;            // 세션 재연결 타이머
+  let flyRotate = null;            // 60초 만료 전 교대 타이머
   let flyAppId = '';
   const FLY_FRAME_BYTES = 1280;    // iFlytek 규격
   let aaiSocket = null;
@@ -385,14 +386,14 @@
     pipeAudio(sendFlytekChunk, true);
 
     // 2) 첫 세션 연결
-    const ok = await openFlySession();
+    const ok = await openFlySession(false);
     if (!ok) { closeMic(); isListening = false; return false; }
     return true;
   }
 
-  // iat는 한 세션당 최대 60초 + 말 끝나면 자동 종료 →
-  // 듣는 중이면 세션만 계속 새로 열어줌 (마이크는 유지)
-  async function openFlySession() {
+  // iat는 한 세션당 최대 60초 + 말이 멈추면 자동 종료.
+  // 긴 발화가 끊기지 않도록, 만료 전에 다음 세션을 미리 열어두고 이어붙임.
+  async function openFlySession(background) {
     let wsUrl, appId;
     try {
       const res = await fetch(IFLYTEK_AUTH_PROXY);
@@ -400,40 +401,69 @@
       wsUrl = data?.url; appId = data?.app_id;
       if (!wsUrl || !appId) throw new Error('no url');
     } catch(e) {
-      fallbackTo('aai', '인식 서버 연결 실패');
+      if (!background) fallbackTo('aai', '인식 서버 연결 실패');
       return false;
     }
 
-    flySocket = new WebSocket(wsUrl);
+    const sock = new WebSocket(wsUrl);
     flyAppId = appId;
-    flyFirstFrame = true;
-    flySlices = [];
 
-    flySocket.onopen = () => setStatus('listening', '듣는 중...');
+    sock.onopen = () => {
+      if (background) {
+        // 미리 열어둔 세션으로 교대 — 이전 세션은 마무리 요청 후 종료
+        terminateFlySocket(flySocket);
+        flySocket = sock;
+      } else {
+        flySocket = sock;
+      }
+      flyFirstFrame = true;
+      setStatus('listening', '듣는 중...');
+      scheduleFlyRotate();
+    };
 
-    flySocket.onmessage = ev => {
+    sock.onmessage = ev => {
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg.code !== 0) {
         // 11201 = 무료 콜 소진
-        if (msg.code === 11201) { stopFlytek(); fallbackTo('aai', '무료 사용량 소진'); return; }
+        if (msg.code === 11201) { stopFlytek(); fallbackTo('aai', '무료 사용량 소진'); }
         return;
       }
       handleFlytekResult(msg.data);
     };
 
-    flySocket.onerror = () => {};
+    sock.onerror = () => {};
 
-    flySocket.onclose = () => {
+    sock.onclose = () => {
+      if (sock !== flySocket) return;        // 교대로 물러난 이전 세션은 무시
       flySocket = null;
-      // 듣는 중이면 다음 발화를 위해 세션 재개
+      // 말이 멈춰서 종료된 경우 → 다음 발화 대기용으로 즉시 재개
       if (isListening && sttMode === 'iflytek') {
         clearTimeout(flyReopen);
-        flyReopen = setTimeout(() => { if (isListening) openFlySession(); }, 150);
+        flyReopen = setTimeout(() => { if (isListening) openFlySession(false); }, 120);
       }
     };
 
     return true;
+  }
+
+  // 60초 만료 전(50초)에 다음 세션을 미리 열어 공백 없이 교대
+  function scheduleFlyRotate() {
+    clearTimeout(flyRotate);
+    flyRotate = setTimeout(() => {
+      if (isListening && sttMode === 'iflytek') openFlySession(true);
+    }, 50000);
+  }
+
+  // 이전 세션에 종료 프레임을 보내 마지막 결과를 받아냄
+  function terminateFlySocket(sock) {
+    if (!sock || sock.readyState !== WebSocket.OPEN) return;
+    try {
+      sock.send(JSON.stringify({
+        data: { status: 2, format: 'audio/L16;rate=16000', encoding: 'raw', audio: '' }
+      }));
+    } catch {}
+    setTimeout(() => { try { sock.close(1000); } catch {} }, 500);
   }
 
   // 오디오 청크 → base64 → JSON 프레임 전송
@@ -503,6 +533,7 @@
   function stopFlytek() {
     isListening = false;
     clearTimeout(flyReopen);
+    clearTimeout(flyRotate);
 
     // 종료 프레임 (status=2)
     if (flySocket && flySocket.readyState === WebSocket.OPEN) {
