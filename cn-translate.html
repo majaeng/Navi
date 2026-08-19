@@ -200,6 +200,7 @@
   let lastOriginal = '';
   let lastTranslated = '';
   let lastSent = '';               // 같은 문장 중복 번역 방지
+  let transSeq = 0;                // 번역 응답 순서 보장
   let cnyToKrw = null; // 환율 캐시
 
   // ── 환율 로드 (앱 시작시 1회) ──
@@ -278,8 +279,39 @@
   }
 
   // ── 번역 (파파고) ──
+  // ── 번역 캐시 ──
+  // 자주 나오는 표현은 왕복 없이 즉시 표시 (지연 0)
+  const transCache = new Map(Object.entries({
+    '你好': '안녕하세요', '谢谢': '감사합니다', '不客气': '천만에요',
+    '对不起': '죄송합니다', '没关系': '괜찮습니다', '再见': '안녕히 가세요',
+    '多少钱': '얼마예요?', '太贵了': '너무 비싸요', '便宜一点': '조금 깎아주세요',
+    '好的': '좋아요', '是的': '네', '不是': '아니요', '知道了': '알겠습니다',
+    '请问': '실례합니다', '等一下': '잠시만요', '可以': '가능합니다',
+    '没问题': '문제없습니다', '不好意思': '죄송합니다', '辛苦了': '수고하셨습니다',
+  }));
+  const CACHE_MAX = 400;
+
+  function showTranslation(translated, isFinal) {
+    if (isFinal && lastTranslated) $prev.textContent = lastTranslated;
+    lastTranslated = translated;
+    $trans.textContent = translated;
+    $trans.classList.remove('empty');
+  }
+
   async function translate(text, isFinal) {
-    if (!text.trim()) return;
+    text = text.trim();
+    if (!text) return;
+
+    // 캐시 적중 → 네트워크 없이 즉시
+    const hit = transCache.get(text);
+    if (hit) {
+      showTranslation(hit, isFinal);
+      const amount = detectAmount(text);
+      amount ? showCurrency(amount) : hideCurrency();
+      return;
+    }
+
+    const seq = ++transSeq;
     setStatus('translating', '번역 중...');
     try {
       const res = await fetch(PAPAGO_PROXY, {
@@ -289,12 +321,17 @@
       });
       const data = await res.json();
       const translated = data?.message?.result?.translatedText;
+      // 더 최신 요청이 이미 도착했으면 이 결과는 버림
+      if (seq !== transSeq) return;
+
       if (translated) {
-        // 확정된 문장만 이전 줄로 밀어올림 (중간 번역은 덮어쓰기만)
-        if (isFinal && lastTranslated) $prev.textContent = lastTranslated;
-        lastTranslated = translated;
-        $trans.textContent = translated;
-        $trans.classList.remove('empty');
+        showTranslation(translated, isFinal);
+
+        // 캐시에 저장 (다음에 같은 말이 나오면 즉시 표시)
+        transCache.set(text, translated);
+        if (transCache.size > CACHE_MAX) {
+          transCache.delete(transCache.keys().next().value);
+        }
 
         // 금액 감지 → 환율 뱃지
         const amount = detectAmount(text);
@@ -494,7 +531,7 @@
         domain: 'iat',        // Short Form ASR
         accent: 'mandarin',   // 쓰촨 등 방언도 이 엔진이 흡수함
         dwa: 'wpgs',          // 스트리밍 중간결과 활성화
-        vad_eos: 1200,        // 1.2초 침묵 = 발화 종료 (짧을수록 반응 빠름)
+        vad_eos: 700,         // 0.7초 침묵 = 발화 종료 (짧을수록 반응 빠름)
         ptt: 1,               // 구두점
       };
       flyFirstFrame = false;
@@ -533,12 +570,12 @@
       return;
     }
 
-    // 아직 말하는 중이어도, 0.7초간 인식 결과가 멈추면 미리 번역해서 띄움
+    // 아직 말하는 중이어도 0.3초만 멈추면 미리 번역해서 띄움
     clearTimeout(flyPending);
     flyPending = setTimeout(() => {
       const t = flySlices.join('').trim();
       if (t.length > 1 && t !== lastSent) { lastSent = t; translate(t); }
-    }, 700);
+    }, 300);
   }
 
   function stopFlytek() {
