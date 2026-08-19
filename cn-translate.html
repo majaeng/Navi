@@ -186,6 +186,7 @@
   let flyPending = null;             // 중간결과 번역 디바운스
   let flyPreroll = [];               // 세션 열리기 직전 음성 보관
   let flyOpening = false;            // 세션 여는 중 중복 방지
+  let flyOpenGuard = null;           // 연결 지연 시 플래그 해제
   let flyQuietSince = 0;
   const VOICE_THRESHOLD = 0.008;     // 말소리 판정 음량 (멀리서 말해도 잡히게)
   const PREROLL_CHUNKS = 3;          // 약 0.7초 분량 보관
@@ -521,10 +522,15 @@
   }
 
   // 말소리 감지 → 세션이 없으면 열기
+  // flyOpening 은 소켓이 실제로 열리거나 실패할 때까지 유지해야 함
+  // (일찍 풀면 1초 안에 세션이 여러 개 열려 동시연결 제한에 걸림)
   function onVoiceDetected() {
     if (flySocket || flyOpening) return;
     flyOpening = true;
-    openFlySession(false).finally(() => { flyOpening = false; });
+    // 연결이 매달려 있을 경우를 대비한 안전장치
+    clearTimeout(flyOpenGuard);
+    flyOpenGuard = setTimeout(() => { flyOpening = false; }, 6000);
+    openFlySession(false);
   }
 
   // iat는 한 세션당 최대 60초 + 말이 멈추면 자동 종료.
@@ -537,21 +543,20 @@
       wsUrl = data?.url; appId = data?.app_id;
       if (!wsUrl || !appId) throw new Error('no url');
     } catch(e) {
+      flyOpening = false;
       if (!background) fallbackTo('aai', '인식 서버 연결 실패');
       return false;
     }
 
     const sock = new WebSocket(wsUrl);
+    let opened = false;
     flyAppId = appId;
 
     sock.onopen = () => {
-      if (background) {
-        // 미리 열어둔 세션으로 교대 — 이전 세션은 마무리 요청 후 종료
-        terminateFlySocket(flySocket);
-        flySocket = sock;
-      } else {
-        flySocket = sock;
-      }
+      opened = true;
+      flyOpening = false;
+      if (background) terminateFlySocket(flySocket);   // 이전 세션 마무리
+      flySocket = sock;
       flyFirstFrame = true;
       setStatus('listening', '듣는 중...');
       scheduleFlyRotate();
@@ -568,9 +573,11 @@
       handleFlytekResult(msg.data);
     };
 
-    sock.onerror = () => {};
+    sock.onerror = () => { flyOpening = false; };
 
     sock.onclose = () => {
+      // 아예 열리지도 못한 경우(인증 실패 등) 플래그 해제
+      if (!opened) { flyOpening = false; return; }
       if (sock !== flySocket) return;        // 교대로 물러난 이전 세션은 무시
       flySocket = null;
       flyCarry = new Uint8Array(0);
