@@ -201,6 +201,7 @@
   let lastTranslated = '';
   let lastSent = '';               // 같은 문장 중복 번역 방지
   let transSeq = 0;                // 번역 응답 순서 보장
+  let papagoFails = 0;             // 파파고 연속 실패 횟수
   let cnyToKrw = null; // 환율 캐시
 
   // ── 환율 로드 (앱 시작시 1회) ──
@@ -331,6 +332,57 @@
     $trans.classList.remove('empty');
   }
 
+  // ── 번역 엔진 (파파고 우선 → iFlytek 폴백) ──
+  // 파파고가 느리거나 막히면(중국 등) 자동으로 iFlytek으로 넘어감
+  const PAPAGO_TIMEOUT = 2500;
+
+  async function papagoTranslate(text) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), PAPAGO_TIMEOUT);
+    try {
+      const res = await fetch(PAPAGO_PROXY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `source=zh-CN&target=ko&text=${encodeURIComponent(text)}`,
+        signal: ctl.signal,
+      });
+      const data = await res.json();
+      return data?.message?.result?.translatedText || '';
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function flytekTranslate(text) {
+    if (!IFLYTEK_AUTH_PROXY) return '';
+    const res = await fetch(IFLYTEK_AUTH_PROXY, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json();
+    return data?.translated || '';
+  }
+
+  async function translateVia(text) {
+    // 파파고가 최근에 연속 실패했으면 건너뛰고 바로 iFlytek 사용
+    if (papagoFails < 3) {
+      try {
+        const t = await papagoTranslate(text);
+        if (t) { papagoFails = 0; return t; }
+        papagoFails++;
+      } catch(e) {
+        papagoFails++;
+      }
+    }
+    const t2 = await flytekTranslate(text);
+    if (t2 && papagoFails === 3) {
+      showToast('번역 엔진 전환 (讯飞)');
+      papagoFails++;   // 토스트 1회만
+    }
+    return t2;
+  }
+
   async function translate(text, isFinal) {
     text = text.trim();
     if (!text) return;
@@ -351,13 +403,7 @@
     const seq = ++transSeq;
     setStatus('translating', '번역 중...');
     try {
-      const res = await fetch(PAPAGO_PROXY, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `source=zh-CN&target=ko&text=${encodeURIComponent(text)}`,
-      });
-      const data = await res.json();
-      const translated = data?.message?.result?.translatedText;
+      const translated = await translateVia(text);
       // 더 최신 요청이 이미 도착했으면 이 결과는 버림
       if (seq !== transSeq) return;
 
