@@ -119,6 +119,20 @@
       color: rgba(125,255,154,0.85);
     }
 
+    /* 진단 패널 (D키로 켜고 끔) */
+    .debug {
+      position: absolute; left: 12px; right: 12px; bottom: 96px;
+      background: rgba(0,0,0,0.85); border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px; padding: 10px 12px;
+      font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+      color: rgba(255,255,255,0.75); line-height: 1.6;
+      display: none; text-align: left; white-space: pre-wrap;
+      max-height: 200px; overflow-y: auto;
+    }
+    .debug.show { display: block; }
+    .debug b { color: #7dff9a; font-weight: 400; }
+    .debug .err { color: #ff8b8b; }
+
     /* 에러 토스트 */
     .toast {
       position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
@@ -159,6 +173,7 @@
     <span class="hint">Enter / 탭 → 시작·정지</span>
   </div>
 
+  <div class="debug show" id="debug"></div>
   <div class="toast" id="toast"></div>
 </div>
 
@@ -279,6 +294,26 @@
     $status.textContent = text;
   }
 
+  // ── 진단 패널 ──
+  const dbg = {
+    mic: '-', rms: 0, peak: 0, session: '없음',
+    frames: 0, recv: 0, lastText: '-', lastErr: '-', trans: '-',
+  };
+  const $debug = document.getElementById('debug');
+
+  function renderDebug() {
+    if (!$debug.classList.contains('show')) return;
+    const bar = '█'.repeat(Math.min(20, Math.round(dbg.rms * 250)));
+    $debug.innerHTML =
+      `엔진 <b>${sttMode}</b>   세션 <b>${dbg.session}</b>   마이크 <b>${dbg.mic}</b>\n` +
+      `음량 ${bar || '·'} ${dbg.rms.toFixed(4)} (최대 ${dbg.peak.toFixed(4)})\n` +
+      `보낸프레임 <b>${dbg.frames}</b>   받은응답 <b>${dbg.recv}</b>\n` +
+      `인식 ${dbg.lastText}\n` +
+      `번역 ${dbg.trans}\n` +
+      (dbg.lastErr !== '-' ? `<span class="err">오류 ${dbg.lastErr}</span>` : '');
+  }
+  setInterval(renderDebug, 250);
+
   function showToast(msg) {
     $toast.textContent = msg;
     $toast.classList.add('show');
@@ -332,6 +367,7 @@
   });
 
   function showTranslation(translated, isFinal) {
+    dbg.trans = translated;
     if (isFinal && lastTranslated) $prev.textContent = lastTranslated;
     lastTranslated = translated;
     $trans.textContent = translated;
@@ -527,6 +563,7 @@
   function onVoiceDetected() {
     if (flySocket || flyOpening) return;
     flyOpening = true;
+    dbg.session = '연결중';
     // 연결이 매달려 있을 경우를 대비한 안전장치
     clearTimeout(flyOpenGuard);
     flyOpenGuard = setTimeout(() => { flyOpening = false; }, 6000);
@@ -558,14 +595,17 @@
       if (background) terminateFlySocket(flySocket);   // 이전 세션 마무리
       flySocket = sock;
       flyFirstFrame = true;
+      dbg.session = '열림'; dbg.frames = 0; dbg.recv = 0; dbg.lastErr = '-';
       setStatus('listening', '듣는 중...');
       scheduleFlyRotate();
     };
 
     sock.onmessage = ev => {
+      dbg.recv++;
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg.code !== 0) {
+        dbg.lastErr = msg.code + ' ' + (msg.message || '');
         // 11201 = 무료 콜 소진
         if (msg.code === 11201) { stopFlytek(); fallbackTo('aai', '무료 사용량 소진'); }
         return;
@@ -573,11 +613,17 @@
       handleFlytekResult(msg.data);
     };
 
-    sock.onerror = () => { flyOpening = false; };
+    sock.onerror = () => { flyOpening = false; dbg.lastErr = 'WebSocket 연결 오류'; };
 
-    sock.onclose = () => {
+    sock.onclose = (e) => {
       // 아예 열리지도 못한 경우(인증 실패 등) 플래그 해제
-      if (!opened) { flyOpening = false; return; }
+      if (!opened) {
+        flyOpening = false;
+        dbg.session = '연결실패';
+        dbg.lastErr = '핸드셰이크 실패 (code ' + e.code + ')';
+        return;
+      }
+      dbg.session = '닫힘';
       if (sock !== flySocket) return;        // 교대로 물러난 이전 세션은 무시
       flySocket = null;
       flyCarry = new Uint8Array(0);
@@ -641,6 +687,7 @@
     }
 
     flySocket.send(JSON.stringify(frame));
+    dbg.frames++;
   }
 
   // wpgs 스트리밍 결과 조립 (apd=이어붙임, rpl=구간교체)
@@ -663,6 +710,7 @@
     const text = flySlices.join('').trim();
     if (!text) return;
 
+    dbg.lastText = text;
     $orig.textContent = text;
 
     // 문장이 끝났으면 즉시 번역
@@ -803,8 +851,11 @@
           channelCount: 1,
         }
       });
+      dbg.mic = '정상';
       return true;
     } catch(e) {
+      dbg.mic = '권한거부';
+      dbg.lastErr = '마이크 접근 실패: ' + e.name;
       showToast('마이크 권한을 허용해주세요');
       setStatus('', 'Enter로 시작');
       return false;
@@ -847,6 +898,8 @@
       let sum = 0;
       for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
       const rms = Math.sqrt(sum / input.length);
+      dbg.rms = rms;
+      if (rms > dbg.peak) dbg.peak = rms;
       if (rms > VOICE_THRESHOLD) {
         flyQuietSince = 0;
         onVoiceDetected();
@@ -949,6 +1002,12 @@
     if (e.key === 'Enter' || e.key === ' ') {
       toggleListen();
       e.preventDefault();
+    }
+    // D: 진단 패널 켜기/끄기
+    if (e.key === 'd' || e.key === 'D') {
+      $debug.classList.toggle('show');
+      e.preventDefault();
+      return;
     }
     // ESC: 초기화
     if (e.key === 'Escape') {
