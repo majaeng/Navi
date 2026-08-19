@@ -208,7 +208,7 @@
   let gain = 1;                      // 소프트웨어 증폭 배율
   let peakTracker = 0;               // 최근 최대 진폭
   const TARGET_PEAK = 0.35;          // 증폭 목표 레벨
-  const MAX_GAIN = 30;               // 최대 증폭 배율
+  const MAX_GAIN = 12;               // 최대 증폭 배율 (높이면 잡음까지 커져 인식 방해)
   const PREROLL_CHUNKS = 3;          // 약 0.7초 분량 보관
   let flyReopen = null;            // 세션 재연결 타이머
   let flyRotate = null;            // 60초 만료 전 교대 타이머
@@ -738,13 +738,15 @@
       return;
     }
 
-    // 아직 말하는 중이어도 잠깐 멈추면 미리 번역해서 띄움.
-    // 단, 너무 짧은 조각은 문맥이 없어 오역이 되므로 4자 이상일 때만.
+    // 아직 말하는 중일 때의 미리보기 번역.
+    // 조각을 성급히 번역하면 오역이 심하므로 조건을 엄격히 둠:
+    //  · 8자 이상 (문맥이 생길 만큼 쌓였을 때)
+    //  · 0.8초간 인식 결과가 더 늘지 않을 때
     clearTimeout(flyPending);
     flyPending = setTimeout(() => {
       const t = flySlices.join('').trim();
-      if (t.length >= 4 && t !== lastSent) { lastSent = t; translate(t); }
-    }, 500);
+      if (t.length >= 8 && t !== lastSent) { lastSent = t; translate(t); }
+    }, 800);
   }
 
   function stopFlytek() {
