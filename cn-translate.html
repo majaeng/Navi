@@ -610,9 +610,20 @@
         dbg.lastErr = msg.code + ' ' + (msg.message || '');
         // 11201 = 무료 콜 소진
         if (msg.code === 11201) { stopFlytek(); fallbackTo('aai', '무료 사용량 소진'); }
+        // 그 외 오류는 세션을 버리고 다음 발화 때 새로 엶
+        else if (sock === flySocket) { flySocket = null; try { sock.close(1000); } catch {} }
         return;
       }
       handleFlytekResult(msg.data);
+
+      // 서버가 인식 종료를 알리면 즉시 전송 중단 (더 보내면 invalid handle)
+      if (msg.data?.status === 2 && sock === flySocket) {
+        dbg.session = '완료';
+        flySocket = null;
+        flyCarry = new Uint8Array(0);
+        clearTimeout(flyRotate);
+        setTimeout(() => { try { sock.close(1000); } catch {} }, 100);
+      }
     };
 
     sock.onerror = () => { flyOpening = false; dbg.lastErr = 'WebSocket 연결 오류'; };
