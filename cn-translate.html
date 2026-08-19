@@ -175,7 +175,7 @@
 
   // ── iFlytek 인증 프록시 (메인 엔진) ──
   // ⚠️ 아직 미설정: Worker 만든 뒤 아래 주소를 채우면 활성화됨
-  const IFLYTEK_AUTH_PROXY = '';   // 예: 'https://iflytek-auth.majaeng.workers.dev'
+  const IFLYTEK_AUTH_PROXY = 'https://iflytek-auth.majaeng.workers.dev';
 
   // 엔진 우선순위: iflytek → aai → browser (앞이 실패하면 다음으로)
   let sttMode = 'iflytek';
@@ -184,6 +184,8 @@
   let flySlices = [];              // wpgs 스트리밍 결과 조각들
   let flyQueue = [];               // 전송 대기 오디오
   let flyPacer = null;             // 40ms 페이싱 타이머
+  let flyReopen = null;            // 세션 재연결 타이머
+  let flyAppId = '';
   const FLY_FRAME_BYTES = 1280;    // iFlytek 규격
   let aaiSocket = null;
   let audioCtx = null;
@@ -372,52 +374,70 @@
   async function startFlytek() {
     if (!IFLYTEK_AUTH_PROXY) return fallbackTo('aai', null);
 
-    // 1) Worker에서 서명된 접속 URL 받기
+    // 1) 마이크 먼저 확보 (세션 재연결 중에도 계속 유지)
+    if (!(await openMic())) return false;
+
+    isListening = true;
+    $btn.classList.add('active');
+    $btn.textContent = '⏹';
+
+    // 마이크 → 큐 (소켓이 끊겨있어도 계속 쌓임)
+    pipeAudio(sendFlytekChunk, true);
+
+    // 2) 첫 세션 연결
+    const ok = await openFlySession();
+    if (!ok) { closeMic(); isListening = false; return false; }
+    return true;
+  }
+
+  // iat는 한 세션당 최대 60초 + 말 끝나면 자동 종료 →
+  // 듣는 중이면 세션만 계속 새로 열어줌 (마이크는 유지)
+  async function openFlySession() {
     let wsUrl, appId;
-    setStatus('translating', '연결 중...');
     try {
       const res = await fetch(IFLYTEK_AUTH_PROXY);
       const data = await res.json();
       wsUrl = data?.url; appId = data?.app_id;
       if (!wsUrl || !appId) throw new Error('no url');
     } catch(e) {
-      return fallbackTo('aai', '인식 서버 연결 실패');
+      fallbackTo('aai', '인식 서버 연결 실패');
+      return false;
     }
 
-    // 2) 마이크 확보
-    if (!(await openMic())) return false;
-
-    // 3) WebSocket 연결
     flySocket = new WebSocket(wsUrl);
+    flyAppId = appId;
     flyFirstFrame = true;
     flySlices = [];
 
-    flySocket.onopen = () => {
-      isListening = true;
-      setStatus('listening', '듣는 중...');
-      $btn.classList.add('active');
-      $btn.textContent = '⏹';
-      pipeAudio(sendFlytekChunk, appId);
-    };
+    flySocket.onopen = () => setStatus('listening', '듣는 중...');
 
     flySocket.onmessage = ev => {
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
-      if (msg.code !== 0) { showToast('인식 오류 ' + msg.code); return; }
+      if (msg.code !== 0) {
+        // 11201 = 무료 콜 소진
+        if (msg.code === 11201) { stopFlytek(); fallbackTo('aai', '무료 사용량 소진'); return; }
+        return;
+      }
       handleFlytekResult(msg.data);
     };
 
     flySocket.onerror = () => {};
 
     flySocket.onclose = () => {
-      if (isListening) { stopFlytek(); fallbackTo('aai', '세션 종료'); }
+      flySocket = null;
+      // 듣는 중이면 다음 발화를 위해 세션 재개
+      if (isListening && sttMode === 'iflytek') {
+        clearTimeout(flyReopen);
+        flyReopen = setTimeout(() => { if (isListening) openFlySession(); }, 150);
+      }
     };
 
     return true;
   }
 
   // 오디오 청크 → base64 → JSON 프레임 전송
-  function sendFlytekChunk(pcmBuffer, appId) {
+  function sendFlytekChunk(pcmBuffer) {
     if (!flySocket || flySocket.readyState !== WebSocket.OPEN) return;
 
     const bytes = new Uint8Array(pcmBuffer);
@@ -436,14 +456,14 @@
 
     // 첫 프레임에만 공통/비즈니스 파라미터 포함
     if (flyFirstFrame) {
-      frame.common = { app_id: appId };
+      frame.common = { app_id: flyAppId };
       frame.business = {
         language: 'zh_cn',
-        domain: 'ist_open',
+        domain: 'iat',        // Short Form ASR
         accent: 'mandarin',   // 쓰촨 등 방언도 이 엔진이 흡수함
         dwa: 'wpgs',          // 스트리밍 중간결과 활성화
-        punc: 1,
-        nunum: 1,
+        vad_eos: 2500,        // 2.5초 침묵 = 발화 종료로 간주
+        ptt: 1,               // 구두점
       };
       flyFirstFrame = false;
     }
@@ -482,6 +502,7 @@
 
   function stopFlytek() {
     isListening = false;
+    clearTimeout(flyReopen);
 
     // 종료 프레임 (status=2)
     if (flySocket && flySocket.readyState === WebSocket.OPEN) {
@@ -631,6 +652,8 @@
       }
       if (paced) {
         flyQueue.push(new Uint8Array(pcm.buffer));
+        // 세션 재연결 중 오래된 오디오가 무한정 쌓이지 않도록 제한 (약 2초)
+        while (flyQueue.length > 8) flyQueue.shift();
       } else {
         onChunk(pcm.buffer);
       }
