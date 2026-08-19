@@ -182,8 +182,8 @@
   let flySocket = null;
   let flyFirstFrame = true;
   let flySlices = [];              // wpgs 스트리밍 결과 조각들
-  let flyQueue = [];               // 전송 대기 오디오
-  let flyPacer = null;             // 40ms 페이싱 타이머
+  let flyCarry = new Uint8Array(0);  // 프레임 경계에 걸친 잔여 바이트
+  let flyPending = null;             // 중간결과 번역 디바운스
   let flyReopen = null;            // 세션 재연결 타이머
   let flyRotate = null;            // 60초 만료 전 교대 타이머
   let flyAppId = '';
@@ -199,6 +199,7 @@
   let translateTimer = null;
   let lastOriginal = '';
   let lastTranslated = '';
+  let lastSent = '';               // 같은 문장 중복 번역 방지
   let cnyToKrw = null; // 환율 캐시
 
   // ── 환율 로드 (앱 시작시 1회) ──
@@ -277,7 +278,7 @@
   }
 
   // ── 번역 (파파고) ──
-  async function translate(text) {
+  async function translate(text, isFinal) {
     if (!text.trim()) return;
     setStatus('translating', '번역 중...');
     try {
@@ -289,7 +290,8 @@
       const data = await res.json();
       const translated = data?.message?.result?.translatedText;
       if (translated) {
-        if (lastTranslated) $prev.textContent = lastTranslated;
+        // 확정된 문장만 이전 줄로 밀어올림 (중간 번역은 덮어쓰기만)
+        if (isFinal && lastTranslated) $prev.textContent = lastTranslated;
         lastTranslated = translated;
         $trans.textContent = translated;
         $trans.classList.remove('empty');
@@ -492,7 +494,7 @@
         domain: 'iat',        // Short Form ASR
         accent: 'mandarin',   // 쓰촨 등 방언도 이 엔진이 흡수함
         dwa: 'wpgs',          // 스트리밍 중간결과 활성화
-        vad_eos: 2500,        // 2.5초 침묵 = 발화 종료로 간주
+        vad_eos: 1200,        // 1.2초 침묵 = 발화 종료 (짧을수록 반응 빠름)
         ptt: 1,               // 구두점
       };
       flyFirstFrame = false;
@@ -523,11 +525,20 @@
 
     $orig.textContent = text;
 
-    // 문장이 끝났으면(ls=true 또는 status=2) 번역
+    // 문장이 끝났으면 즉시 번역
     if (r.ls || data.status === 2) {
-      if (text.length > 1) translate(text);
+      clearTimeout(flyPending);
+      if (text.length > 1 && text !== lastSent) { lastSent = text; translate(text, true); }
       flySlices = [];
+      return;
     }
+
+    // 아직 말하는 중이어도, 0.7초간 인식 결과가 멈추면 미리 번역해서 띄움
+    clearTimeout(flyPending);
+    flyPending = setTimeout(() => {
+      const t = flySlices.join('').trim();
+      if (t.length > 1 && t !== lastSent) { lastSent = t; translate(t); }
+    }, 700);
   }
 
   function stopFlytek() {
@@ -654,8 +665,8 @@
   }
 
   function closeMic() {
-    clearInterval(flyPacer); flyPacer = null;
-    flyQueue = [];
+    clearTimeout(flyPending); flyPending = null;
+    flyCarry = new Uint8Array(0);
     procNode?.disconnect(); srcNode?.disconnect();
     audioCtx?.close().catch(() => {});
     procNode = null; srcNode = null; audioCtx = null;
@@ -682,29 +693,21 @@
         pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
       }
       if (paced) {
-        flyQueue.push(new Uint8Array(pcm.buffer));
-        // 세션 재연결 중 오래된 오디오가 무한정 쌓이지 않도록 제한 (약 2초)
-        while (flyQueue.length > 8) flyQueue.shift();
+        // 마이크는 이미 실시간 속도로 들어오므로 타이머로 늦추지 않고
+        // 규격 프레임 크기(1280B)로만 쪼개서 즉시 전송
+        const incoming = new Uint8Array(pcm.buffer);
+        const merged = new Uint8Array(flyCarry.length + incoming.length);
+        merged.set(flyCarry); merged.set(incoming, flyCarry.length);
+        let off = 0;
+        while (merged.length - off >= FLY_FRAME_BYTES) {
+          onChunk(merged.slice(off, off + FLY_FRAME_BYTES).buffer);
+          off += FLY_FRAME_BYTES;
+        }
+        flyCarry = merged.slice(off);
       } else {
         onChunk(pcm.buffer);
       }
     };
-
-    // iFlytek 규격: 40ms 간격으로 1280바이트씩
-    if (paced) {
-      let carry = new Uint8Array(0);
-      flyPacer = setInterval(() => {
-        while (flyQueue.length && carry.length < FLY_FRAME_BYTES) {
-          const next = flyQueue.shift();
-          const merged = new Uint8Array(carry.length + next.length);
-          merged.set(carry); merged.set(next, carry.length);
-          carry = merged;
-        }
-        if (carry.length < FLY_FRAME_BYTES) return;
-        onChunk(carry.slice(0, FLY_FRAME_BYTES).buffer, extra);
-        carry = carry.slice(FLY_FRAME_BYTES);
-      }, 40);
-    }
 
     srcNode.connect(procNode);
     procNode.connect(audioCtx.destination);
