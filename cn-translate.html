@@ -104,6 +104,21 @@
     .currency-arrow { font-size: 11px; color: rgba(255,255,255,0.2); }
     .currency-krw { font-size: 18px; font-weight: 700; color: rgba(255,200,50,0.95); }
 
+    /* STT 엔진 표시 (좌상단) */
+    .engine-pill {
+      position: absolute; top: 24px; left: 24px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 50px; padding: 5px 12px;
+      font-size: 10px; color: rgba(255,255,255,0.35);
+      letter-spacing: 0.3px;
+    }
+    .engine-pill.hq {
+      background: rgba(125,255,154,0.10);
+      border-color: rgba(125,255,154,0.28);
+      color: rgba(125,255,154,0.85);
+    }
+
     /* 에러 토스트 */
     .toast {
       position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
@@ -116,6 +131,9 @@
 </head>
 <body>
 <div id="app">
+
+  <!-- STT 엔진 표시 -->
+  <div class="engine-pill" id="engine-pill">일반</div>
 
   <!-- 상태 표시 -->
   <div class="status-pill">
@@ -138,7 +156,7 @@
   <!-- 마이크 버튼 -->
   <div class="bottom-bar">
     <button class="mic-btn" id="mic-btn" onclick="toggleListen()">🎤</button>
-    <span class="hint">Enter / 탭 → 시작·정지</span>
+    <span class="hint">Enter 시작·정지 · ▶ 고정밀 전환</span>
   </div>
 
   <div class="toast" id="toast"></div>
@@ -147,6 +165,16 @@
 <script>
   const PAPAGO_PROXY = 'https://papago-proxy.majaeng.workers.dev';
   const ER_API = 'https://open.er-api.com/v6/latest/CNY';
+
+  // ── Whisper 프록시 (고정밀 모드) ──
+  // ⚠️ 아직 미설정: Cloudflare Worker 만든 뒤 아래 주소를 채우면 활성화됨
+  const WHISPER_PROXY = '';        // 예: 'https://whisper-proxy.majaeng.workers.dev'
+  const CHUNK_MS = 3000;           // 녹음 단위 (3초)
+
+  let sttMode = 'browser';         // 'browser' = 무료 실시간 / 'whisper' = 고정밀
+  let mediaRecorder = null;
+  let mediaStream = null;
+  let chunkTimer = null;
 
   let recognition = null;
   let isListening = false;
@@ -322,11 +350,121 @@
     return r;
   }
 
-  // ── 시작/정지 ──
-  function toggleListen() {
-    if (isListening) {
+  // ══════════════════════════════════════════
+  //  Whisper STT (고정밀 모드)
+  //  3초 단위로 녹음 → Worker 프록시 → 텍스트
+  // ══════════════════════════════════════════
+  async function startWhisper() {
+    if (!WHISPER_PROXY) {
+      showToast('고정밀 모드 미설정 (Worker 필요)');
+      return false;
+    }
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      });
+    } catch(e) {
+      showToast('마이크 권한을 허용해주세요');
+      return false;
+    }
+
+    isListening = true;
+    setStatus('listening', '듣는 중... (고정밀)');
+    $btn.classList.add('active');
+    $btn.textContent = '⏹';
+
+    recordChunk();
+    return true;
+  }
+
+  function recordChunk() {
+    if (!isListening || !mediaStream) return;
+
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus' : 'audio/webm';
+    mediaRecorder = new MediaRecorder(mediaStream, { mimeType: mime });
+    const parts = [];
+
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) parts.push(e.data); };
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(parts, { type: mime });
+      if (blob.size > 2000) sendToWhisper(blob);   // 너무 작으면 무음으로 간주
+      if (isListening) recordChunk();              // 다음 청크 이어서 녹음
+    };
+
+    mediaRecorder.start();
+    chunkTimer = setTimeout(() => {
+      if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+    }, CHUNK_MS);
+  }
+
+  async function sendToWhisper(blob) {
+    try {
+      const fd = new FormData();
+      fd.append('file', blob, 'audio.webm');
+      fd.append('model', 'whisper-1');
+      fd.append('language', 'zh');
+
+      const res = await fetch(WHISPER_PROXY, { method: 'POST', body: fd });
+      const data = await res.json();
+      const text = (data?.text || '').trim();
+
+      // 무의미한 결과 걸러내기
+      if (!text || text.length < 2) return;
+      if (/^[。、,.!?？！\s]+$/.test(text)) return;
+
+      $orig.textContent = text;
+      translate(text);
+    } catch(e) {
+      showToast('음성 인식 오류');
+    }
+  }
+
+  function stopWhisper() {
+    isListening = false;
+    clearTimeout(chunkTimer);
+    if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+    mediaStream?.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+    mediaRecorder = null;
+    $btn.classList.remove('active');
+    $btn.textContent = '🎤';
+    setStatus('', 'Enter로 시작');
+  }
+
+  // ── 엔진 전환 ──
+  function setSttMode(mode) {
+    const wasListening = isListening;
+    if (wasListening) stopListen();
+
+    sttMode = mode;
+    const $pill = document.getElementById('engine-pill');
+    if (mode === 'whisper') {
+      $pill.textContent = '고정밀';
+      $pill.classList.add('hq');
+    } else {
+      $pill.textContent = '일반';
+      $pill.classList.remove('hq');
+    }
+
+    if (wasListening) setTimeout(() => toggleListen(), 300);
+  }
+
+  // ── 시작/정지 (모드에 따라 분기) ──
+  function stopListen() {
+    if (sttMode === 'whisper') {
+      stopWhisper();
+    } else {
       isListening = false;
       recognition?.stop();
+    }
+  }
+
+  function toggleListen() {
+    if (isListening) { stopListen(); return; }
+
+    if (sttMode === 'whisper') {
+      startWhisper();
     } else {
       if (!recognition) recognition = initRecognition();
       if (!recognition) return;
@@ -344,10 +482,15 @@
       toggleListen();
       e.preventDefault();
     }
+    // ▶ / ◀ : STT 엔진 전환 (일반 ↔ 고정밀)
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      setSttMode(sttMode === 'whisper' ? 'browser' : 'whisper');
+      e.preventDefault();
+      return;
+    }
     // ESC: 초기화
     if (e.key === 'Escape') {
-      isListening = false;
-      recognition?.stop();
+      stopListen();
       $orig.textContent = '';
       $trans.textContent = '중국어를 말하면 번역됩니다';
       $trans.classList.add('empty');
