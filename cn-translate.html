@@ -204,7 +204,11 @@
   let flyOpenGuard = null;           // 연결 지연 시 플래그 해제
   let flyQuietSince = 0;
   let noiseFloor = 0;                // 주변 소음 수준 (자동 학습)
-  const VOICE_FLOOR = 0.002;         // 최소 판정선 (이보다 낮으면 무시)
+  const VOICE_FLOOR = 0.004;         // 최소 판정선 (증폭 후 기준)
+  let gain = 1;                      // 소프트웨어 증폭 배율
+  let peakTracker = 0;               // 최근 최대 진폭
+  const TARGET_PEAK = 0.35;          // 증폭 목표 레벨
+  const MAX_GAIN = 30;               // 최대 증폭 배율
   const PREROLL_CHUNKS = 3;          // 약 0.7초 분량 보관
   let flyReopen = null;            // 세션 재연결 타이머
   let flyRotate = null;            // 60초 만료 전 교대 타이머
@@ -297,7 +301,7 @@
 
   // ── 진단 패널 ──
   const dbg = {
-    mic: '-', rms: 0, peak: 0, thr: 0, session: '없음',
+    mic: '-', rms: 0, peak: 0, thr: 0, gain: 1, session: '없음',
     frames: 0, recv: 0, lastText: '-', lastErr: '-', trans: '-',
   };
   const $debug = document.getElementById('debug');
@@ -308,7 +312,7 @@
     const bar = '█'.repeat(Math.min(20, Math.round(dbg.rms / scale * 20)));
     $debug.innerHTML =
       `엔진 <b>${sttMode}</b>   세션 <b>${dbg.session}</b>   마이크 <b>${dbg.mic}</b>\n` +
-      `음량 ${bar || '·'} ${dbg.rms.toFixed(4)} (최대 ${dbg.peak.toFixed(4)} / 기준 ${dbg.thr.toFixed(4)})\n` +
+      `음량 ${bar || '·'} ${dbg.rms.toFixed(4)} / 기준 ${dbg.thr.toFixed(4)}   증폭 <b>x${dbg.gain.toFixed(1)}</b>\n` +
       `보낸프레임 <b>${dbg.frames}</b>   받은응답 <b>${dbg.recv}</b>\n` +
       `인식 ${dbg.lastText}\n` +
       `번역 ${dbg.trans}\n` +
@@ -926,10 +930,26 @@
         input = out;
       }
 
-      // Float32 (-1~1) → Int16 PCM
+      // ── 자동 증폭 ──
+      // 입력이 작으면 키워서 인식률을 올린다. 최근 최대치를 기준으로
+      // 목표 레벨에 맞추되, 급격한 변화를 막기 위해 서서히 조정.
+      let framePeak = 0;
+      for (let i = 0; i < input.length; i++) {
+        const a = Math.abs(input[i]);
+        if (a > framePeak) framePeak = a;
+      }
+      peakTracker = Math.max(framePeak, peakTracker * 0.995);   // 천천히 감쇠
+      const wantGain = peakTracker > 0.0005
+        ? Math.min(MAX_GAIN, Math.max(1, TARGET_PEAK / peakTracker))
+        : 1;
+      // 줄일 땐 빠르게(음 깨짐 방지), 키울 땐 천천히(잡음 증폭 방지)
+      gain += (wantGain - gain) * (wantGain < gain ? 0.4 : 0.05);
+      dbg.gain = gain;
+
+      // Float32 (-1~1) → Int16 PCM (증폭 적용, 클리핑 방지)
       const pcm = new Int16Array(input.length);
       for (let i = 0; i < input.length; i++) {
-        const s = Math.max(-1, Math.min(1, input[i]));
+        const s = Math.max(-1, Math.min(1, input[i] * gain));
         pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
       }
       if (!paced) { onChunk(pcm.buffer); return; }
@@ -937,7 +957,7 @@
       // ── 말소리 감지 (음량 기반) ──
       let sum = 0;
       for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
-      const rms = Math.sqrt(sum / input.length);
+      const rms = Math.sqrt(sum / input.length) * gain;   // 증폭 후 기준으로 판단
       dbg.rms = rms;
       if (rms > dbg.peak) dbg.peak = rms;
 
