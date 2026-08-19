@@ -281,15 +281,48 @@
   // ── 번역 (파파고) ──
   // ── 번역 캐시 ──
   // 자주 나오는 표현은 왕복 없이 즉시 표시 (지연 0)
-  const transCache = new Map(Object.entries({
+  // 브라우저에 저장돼서 앱을 껐다 켜도 유지됨
+  const CACHE_KEY = 'cn_translate_cache_v1';
+  const CACHE_MAX = 5000;          // 보관 문장 수
+  let cacheDirty = false;
+
+  const seedPhrases = Object.entries({
     '你好': '안녕하세요', '谢谢': '감사합니다', '不客气': '천만에요',
     '对不起': '죄송합니다', '没关系': '괜찮습니다', '再见': '안녕히 가세요',
     '多少钱': '얼마예요?', '太贵了': '너무 비싸요', '便宜一点': '조금 깎아주세요',
     '好的': '좋아요', '是的': '네', '不是': '아니요', '知道了': '알겠습니다',
     '请问': '실례합니다', '等一下': '잠시만요', '可以': '가능합니다',
     '没问题': '문제없습니다', '不好意思': '죄송합니다', '辛苦了': '수고하셨습니다',
-  }));
-  const CACHE_MAX = 400;
+  });
+
+  // 저장된 캐시 불러오기 (기본 표현 + 그동안 쌓인 것)
+  const seedKeys = new Set(seedPhrases.map(([k]) => k));
+  const transCache = new Map(seedPhrases);
+  try {
+    const saved = JSON.parse(localStorage.getItem(CACHE_KEY) || '[]');
+    for (const [k, v] of saved) transCache.set(k, v);
+  } catch(e) {}
+
+  // 변경분을 주기적으로 저장 (매번 쓰면 느려지므로 5초마다)
+  function saveCache() {
+    if (!cacheDirty) return;
+    cacheDirty = false;
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify([...transCache]));
+    } catch(e) {
+      // 용량 초과 시 절반으로 줄여서 재시도
+      const half = [...transCache].slice(-Math.floor(transCache.size / 2));
+      transCache.clear();
+      for (const [k, v] of seedPhrases) transCache.set(k, v);
+      for (const [k, v] of half) transCache.set(k, v);
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify([...transCache])); } catch(e2) {}
+    }
+  }
+  setInterval(saveCache, 5000);
+  window.addEventListener('pagehide', saveCache);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveCache();
+  });
 
   function showTranslation(translated, isFinal) {
     if (isFinal && lastTranslated) $prev.textContent = lastTranslated;
@@ -305,6 +338,10 @@
     // 캐시 적중 → 네트워크 없이 즉시
     const hit = transCache.get(text);
     if (hit) {
+      // 자주 쓰는 문장이 오래됐다고 밀려나지 않도록 최신으로 갱신
+      if (!seedKeys.has(text)) {
+        transCache.delete(text); transCache.set(text, hit); cacheDirty = true;
+      }
       showTranslation(hit, isFinal);
       const amount = detectAmount(text);
       amount ? showCurrency(amount) : hideCurrency();
@@ -329,8 +366,12 @@
 
         // 캐시에 저장 (다음에 같은 말이 나오면 즉시 표시)
         transCache.set(text, translated);
-        if (transCache.size > CACHE_MAX) {
-          transCache.delete(transCache.keys().next().value);
+        cacheDirty = true;
+        // 넘치면 기본 표현은 남기고 오래된 것부터 정리
+        while (transCache.size > CACHE_MAX) {
+          for (const k of transCache.keys()) {
+            if (!seedKeys.has(k)) { transCache.delete(k); break; }
+          }
         }
 
         // 금액 감지 → 환율 뱃지
