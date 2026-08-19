@@ -618,7 +618,8 @@
         domain: 'iat',        // Short Form ASR
         accent: 'mandarin',   // 쓰촨 등 방언도 이 엔진이 흡수함
         dwa: 'wpgs',          // 스트리밍 중간결과 활성화
-        vad_eos: 700,         // 0.7초 침묵 = 발화 종료 (짧을수록 반응 빠름)
+        vad_eos: 900,         // 0.9초 침묵 = 발화 종료
+                              // 너무 짧으면 문장이 조각나서 번역 품질이 떨어짐
         ptt: 1,               // 구두점
       };
       flyFirstFrame = false;
@@ -657,12 +658,13 @@
       return;
     }
 
-    // 아직 말하는 중이어도 0.3초만 멈추면 미리 번역해서 띄움
+    // 아직 말하는 중이어도 잠깐 멈추면 미리 번역해서 띄움.
+    // 단, 너무 짧은 조각은 문맥이 없어 오역이 되므로 4자 이상일 때만.
     clearTimeout(flyPending);
     flyPending = setTimeout(() => {
       const t = flySlices.join('').trim();
-      if (t.length > 1 && t !== lastSent) { lastSent = t; translate(t); }
-    }, 300);
+      if (t.length >= 4 && t !== lastSent) { lastSent = t; translate(t); }
+    }, 500);
   }
 
   function stopFlytek() {
@@ -772,11 +774,15 @@
   // ══════════════════════════════════════════
   async function openMic() {
     try {
+      // 브라우저 음성처리는 모두 끔 —
+      // echoCancellation은 스피커에서 나오는 소리를 지워버리고(영상·통화 번역 불가),
+      // noiseSuppression/autoGainControl도 음성을 뭉개서 인식률을 떨어뜨림.
+      // 잡음 처리는 iFlytek 엔진이 더 잘함.
       mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
           channelCount: 1,
         }
       });
