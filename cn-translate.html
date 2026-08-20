@@ -498,6 +498,11 @@
   let revealLast = 0;        // 마지막 틱 시각 (시간 기준 계산용)
   let utteranceEnded = false; // 발화가 끝남 → 다음은 새 줄에서
   let uttSegStart = 0;        // 이번 발화가 시작된 조각 위치 (되돌리기용)
+  let lastResultAt = 0;       // 직전 인식 결과가 온 시각
+  let prevTextLen = 0;        // 직전 인식 결과의 길이
+  // 짧은 멈춤은 말더듬이라 단어 한복판을 자르게 된다.
+  // 실측상 1.3초 이상이어야 실제 절 경계(쉼표 자리)와 일치했다.
+  const PAUSE_MS = 1300;
 
   function enqueueReveal(text) {
     revealQueue.push(text);
@@ -893,6 +898,7 @@
       doneText = '';
       sentSegs.clear();
       lastSentLen = 0;
+      lastResultAt = 0; prevTextLen = 0;
       utteranceEnded = true;      // 새 세션 = 새 발화로 취급
 
       dbg.session = '열림'; dbg.frames = 0; dbg.recv = 0; dbg.lastErr = '-';
@@ -1095,6 +1101,20 @@
     //   여러 개를 동시에 보내되 표시 순서는 아래에서 보장한다.
     if (inFlight >= MAX_PARALLEL) return;
     if (pending.length < MIN_CHARS) return;
+
+    // ── 말이 멈춘 지점에서 끊기 ──
+    // 중간 인식 결과에는 구두점이 없다(구두점은 문장이 끝나야 붙는다).
+    // 대신 인식 결과가 갱신되지 않고 비어 있던 시간 = 말이 멈춘 순간이므로
+    // 그 자리를 절 경계로 삼는다.
+    const now = performance.now();
+    const gap = lastResultAt ? now - lastResultAt : 0;
+    lastResultAt = now;
+
+    if (gap > PAUSE_MS && prevTextLen > doneText.length + MIN_CHARS) {
+      const seg = text.slice(doneText.length, prevTextLen);
+      if (seg) { commitSegment(seg); prevTextLen = text.length; return; }
+    }
+    prevTextLen = text.length;
 
     // 1순위: 문장이 끝났으면 거기서 자름
     let cut = lastBoundary(pending, SENT_END);
