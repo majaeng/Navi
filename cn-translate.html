@@ -202,7 +202,8 @@
   let noiseFloor = 0;                // 주변 소음 수준 (자동 학습)
   const VOICE_FLOOR = 0.012;         // 최소 판정선 (이보다 작으면 소음으로 간주)
   let voiceRun = 0;                  // 연속으로 기준을 넘은 프레임 수
-  const VOICE_RUN_MIN = 3;           // 약 0.77초 이상 이어져야 말소리로 인정
+  const VOICE_RUN_MIN = 2;           // 약 0.5초 이상 이어져야 말소리로 인정
+                                     // (더 키우면 시작이 눈에 띄게 늦어진다)
   let gain = 1;                      // 소프트웨어 증폭 배율
   let peakTracker = 0;               // 최근 최대 진폭
   const TARGET_PEAK = 0.35;          // 증폭 목표 레벨
@@ -248,7 +249,7 @@
   const CLAUSE_END = /[，、]/;      // 절 끝 (차선책)
   // 절 단위(쉼표)로 자르면 뜻이 온전하면서도 빨리 나온다.
   // 값이 작을수록 빠르고, 클수록 문맥이 살아난다.
-  const FIRST_SEG = 8;             // 첫 조각은 짧게 끊어 빨리 띄움
+  const FIRST_SEG = 5;             // 첫 조각은 짧게 끊어 빨리 띄움
   const SOFT_SEG = 12;             // 이후에는 절(쉼표) 단위로
   // 강제 절단은 단어 한복판을 자를 수 있어 오역을 만든다
   // (手机卡 → 手机 로 잘려 "차량등록증" 같은 번역이 나옴).
@@ -1438,9 +1439,11 @@
 
       // 소음 대비 3배 이상이면 말소리로 판단.
       // 상한을 둬서 어떤 경우에도 기준이 말소리를 넘지 못하게 한다.
+      // 배수를 크게 잡으면 기준이 말소리 수준까지 올라가 감지가 늦어진다.
+      // 소음 차단은 최소선(VOICE_FLOOR)과 지속 조건이 담당한다.
       const threshold = Math.min(
-        Math.max(noiseFloor * 3, VOICE_FLOOR),
-        Math.max(dbg.peak * 0.25, VOICE_FLOOR)
+        Math.max(noiseFloor * 1.8, VOICE_FLOOR),
+        Math.max(dbg.peak * 0.2, VOICE_FLOOR)
       );
       dbg.thr = threshold;
 
