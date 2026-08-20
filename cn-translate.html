@@ -105,8 +105,9 @@
       color: var(--ink-3); font-weight: 400; font-size: 19px;
       letter-spacing: 0;
     }
-    /* 아직 말하는 중 — 확정 전 */
-    .translated-text.interim { color: rgba(255,255,255,0.62); }
+    /* 아직 확정되지 않은 꼬리 부분만 살짝 흐리게.
+       확정된 앞부분은 밝기가 바뀌지 않아 깜빡임이 없다. */
+    .translated-text .tail { color: rgba(255,255,255,0.72); }
 
     /* 용어 힌트 (업계 용어 감지 시) */
     .terms {
@@ -482,7 +483,23 @@
     return best;
   }
 
-  // 확정 조각은 이어 붙이고, 미리보기 조각은 임시로 덧붙여 보여준다.
+  function esc(s) {
+    return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  }
+
+  // 확정된 부분은 밝기를 고정하고, 아직 확정 안 된 꼬리만 흐리게.
+  // 전체를 껐다 켜면 이미 읽은 글자까지 깜빡여서 오히려 읽기 힘들어진다.
+  function render(tail) {
+    const fixed = segments.join(' ');
+    const html = esc(fixed) +
+      (tail ? (fixed ? ' ' : '') + `<span class="tail">${esc(tail)}</span>` : '');
+    $trans.innerHTML = html || '';
+    $trans.classList.remove('empty');
+    requestAnimationFrame(() => {
+      $transWin.scrollTop = $transWin.scrollHeight;
+    });
+  }
+
   function showTranslation(translated, isFinal, isSegment) {
     dbg.trans = translated;
 
@@ -490,26 +507,18 @@
       // 조각 번역이 아닌 경우 (짧은 발화) — 통째로 교체
       if (isFinal && lastTranslated) $prev.textContent = lastTranslated;
       lastTranslated = translated;
-      segments = [];
-      $trans.textContent = translated;
+      segments = isFinal ? [translated] : [];
+      render(isFinal ? '' : translated);
     } else if (isFinal) {
-      // 확정 조각 — 뒤에 이어 붙임
+      // 확정 조각 — 뒤에 이어 붙이고 꼬리를 지움
       segments.push(translated);
       if (segments.length > MAX_SEGMENTS) segments.shift();
       lastTranslated = segments.join(' ');
-      $trans.textContent = lastTranslated;
+      render('');
     } else {
-      // 미리보기 조각 — 확정분 뒤에 임시로 붙여서만 표시
-      $trans.textContent = (segments.join(' ') + ' ' + translated).trim();
+      // 미리보기 — 확정분은 그대로 두고 꼬리만 갱신
+      render(translated);
     }
-
-    $trans.classList.remove('empty');
-    // 중간 번역은 흐리게, 확정되면 선명하게
-    $trans.classList.toggle('interim', !isFinal);
-    // 자막처럼 항상 최신 줄이 보이도록 부드럽게 따라감
-    requestAnimationFrame(() => {
-      $transWin.scrollTop = $transWin.scrollHeight;
-    });
   }
 
   // ── 번역 엔진 (파파고 우선 → iFlytek 폴백) ──
