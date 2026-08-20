@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>중국어 음성 테스트</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, 'Apple SD Gothic Neo', sans-serif;
+    background: #16171a; color: #e8e8ea;
+    padding: 28px 20px; line-height: 1.6;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 19px; font-weight: 600; margin-bottom: 6px; }
+  .sub { font-size: 13px; color: #8b8d93; margin-bottom: 22px; }
+
+  .controls {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    background: #1e2024; border: 1px solid #2c2f35;
+    border-radius: 10px; padding: 12px 16px; margin-bottom: 20px;
+  }
+  .controls label { font-size: 13px; color: #a8aab0; }
+  input[type=range] { width: 150px; vertical-align: middle; }
+  select {
+    background: #26282d; color: #e8e8ea; border: 1px solid #3a3d44;
+    border-radius: 6px; padding: 5px 9px; font-size: 13px;
+  }
+  #rate-val { font-size: 13px; color: #6ea8fe; min-width: 30px; display: inline-block; }
+
+  .item {
+    background: #1e2024; border: 1px solid #2c2f35;
+    border-radius: 10px; padding: 16px 18px; margin-bottom: 12px;
+  }
+  .item.playing { border-color: #4a9eff; background: #1b2330; }
+  .tag {
+    font-size: 11px; color: #6ea8fe; background: rgba(74,158,255,0.12);
+    border-radius: 20px; padding: 3px 10px; display: inline-block; margin-bottom: 10px;
+  }
+  .cn { font-size: 16px; line-height: 1.75; margin-bottom: 10px; }
+  .ko {
+    font-size: 13px; color: #8b8d93; margin-bottom: 12px;
+    padding-left: 11px; border-left: 2px solid #33363c; line-height: 1.65;
+  }
+  .len { font-size: 11px; color: #61646b; }
+
+  button {
+    background: #2a2d33; color: #e8e8ea; border: 1px solid #3a3d44;
+    border-radius: 7px; padding: 7px 16px; font-size: 13px;
+    cursor: pointer; transition: all .15s;
+  }
+  button:hover { background: #34383f; border-color: #4a4e57; }
+  button.primary { background: #2563eb; border-color: #2563eb; }
+  button.primary:hover { background: #1d4ed8; }
+  .row { display: flex; align-items: center; gap: 10px; }
+
+  .warn {
+    background: rgba(255,180,60,0.08); border: 1px solid rgba(255,180,60,0.25);
+    border-radius: 8px; padding: 11px 14px; font-size: 13px;
+    color: #e5b96b; margin-bottom: 20px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>중국어 음성 테스트</h1>
+  <p class="sub">번역기를 켜둔 채 아래 문장을 재생하면 인식·번역 품질을 확인할 수 있어요.</p>
+
+  <div class="warn" id="warn" style="display:none">
+    중국어 음성이 설치돼 있지 않아요. 시스템 설정 → 손쉬운 사용 → 음성 → 시스템 음성 → 사용자화 에서
+    중국어(중국 본토) 음성을 내려받아 주세요.
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <label>음성</label>
+      <select id="voice"></select>
+    </div>
+    <div class="row">
+      <label>속도</label>
+      <input type="range" id="rate" min="0.5" max="1.3" step="0.05" value="0.9">
+      <span id="rate-val">0.9</span>
+    </div>
+    <button id="play-all">전체 연속 재생</button>
+    <button id="stop">정지</button>
+    <span id="now" style="font-size:12px;color:#6ea8fe"></span>
+  </div>
+
+  <div id="list"></div>
+
+</div>
+
+<script>
+const SENTENCES = [
+  {
+    tag: '회의 · 일정',
+    cn: '关于这个项目的进度，我觉得我们应该先确认一下客户的需求，然后再决定下一步怎么做。',
+    ko: '이 프로젝트 진행 상황에 대해서는, 먼저 고객의 요구사항을 확인한 다음 다음 단계를 어떻게 할지 결정해야 할 것 같습니다.',
+  },
+  {
+    tag: '회의 · 일정 조율',
+    cn: '下周三上午十点开会可以吗？如果时间不合适的话，我们也可以改到下午两点或者星期四。',
+    ko: '다음 주 수요일 오전 10시에 회의 괜찮으세요? 시간이 안 맞으면 오후 2시나 목요일로 바꿔도 됩니다.',
+  },
+  {
+    tag: '업무 · 게임 개발',
+    cn: '这个版本的平衡性还需要调整，玩家反馈说后期的难度上升得太快，体验不太好。',
+    ko: '이번 버전의 밸런스는 조정이 더 필요합니다. 유저 피드백으로는 후반부 난이도가 너무 급격히 올라가서 경험이 좋지 않다고 합니다.',
+  },
+  {
+    tag: '식사 자리',
+    cn: '这家餐厅的川菜特别地道，不过有些菜比较辣，你要是不能吃辣的话我可以帮你点别的。',
+    ko: '이 식당 쓰촨 요리가 아주 정통이에요. 다만 몇몇 요리는 좀 매워서, 매운 걸 못 드시면 다른 걸 시켜드릴게요.',
+  },
+  {
+    tag: '금액 · 환율',
+    cn: '这个一共是三百五十块钱，如果你要两个的话可以给你便宜一点，算六百五十块。',
+    ko: '이건 전부 350위안이에요. 두 개 사시면 좀 깎아드려서 650위안으로 해드릴게요.',
+  },
+  {
+    tag: '일상 대화',
+    cn: '你第一次来成都吗？这边的天气这个季节还不错，就是有点潮湿，你可能需要适应一下。',
+    ko: '청두는 처음이세요? 이 계절엔 날씨가 괜찮은 편인데 좀 습해서 적응이 필요할 수도 있어요.',
+  },
+  {
+    tag: '긴 문장 · 설명',
+    cn: '我们公司成立于二零一五年，主要做手机游戏的研发和运营，目前在成都和上海都有办公室，团队大概有两百人左右。',
+    ko: '저희 회사는 2015년에 설립되었고, 주로 모바일 게임 개발과 운영을 합니다. 현재 청두와 상하이에 사무실이 있고 팀은 200명 정도입니다.',
+  },
+
+  // ─── 장문 (즉시 번역이 따라붙는지 확인용) ───
+  {
+    tag: '장문 · 회의 발표',
+    cn: '关于这次版本更新的整体规划，我想先说明一下背景。上个季度我们的新增用户增长了大概百分之三十，但是七日留存率反而下降了五个百分点，说明玩家进来以后没有找到持续玩下去的理由。所以这次更新的重点不是加新内容，而是把前期的引导流程重新梳理一遍，让新玩家在前三十分钟就能体验到核心的乐趣。',
+    ko: '이번 버전 업데이트의 전체 계획에 대해 먼저 배경을 설명드리겠습니다. 지난 분기 신규 유저는 약 30% 증가했지만 7일 잔존율은 오히려 5%p 하락했습니다. 유저가 들어온 뒤 계속 플레이할 이유를 찾지 못했다는 뜻입니다. 그래서 이번 업데이트의 핵심은 새 콘텐츠 추가가 아니라, 초반 온보딩 흐름을 다시 정리해서 신규 유저가 첫 30분 안에 핵심 재미를 경험하게 만드는 것입니다.',
+  },
+  {
+    tag: '장문 · 협상',
+    cn: '我理解你们的顾虑，不过从我们的角度来看，这个时间表已经压缩到极限了。如果要在三月底之前完成全部的本地化工作，包括文本翻译、语音录制还有测试，我们至少需要提前两个月拿到最终版本的文案。否则的话，要么质量会受影响，要么就得推迟上线时间，这两个结果我想我们双方都不愿意看到。',
+    ko: '우려는 이해합니다만, 저희 입장에서는 이 일정이 이미 한계까지 압축된 상태입니다. 3월 말까지 텍스트 번역, 음성 녹음, 테스트를 포함한 현지화 작업을 모두 끝내려면 최소 두 달 전에는 최종 문안을 받아야 합니다. 그렇지 않으면 품질이 떨어지거나 출시가 미뤄질 텐데, 둘 다 양측이 원하지 않는 결과일 겁니다.',
+  },
+  {
+    tag: '장문 · 식사 자리 잡담',
+    cn: '你们韩国人第一次来成都的话，我一般都推荐先去宽窄巷子那边转一转，那边虽然有点商业化，但是能大概感受一下老成都的样子。然后晚上可以去锦里吃小吃，不过要注意的是四川的辣和韩国的辣完全不一样，我们这边是麻辣，吃了以后舌头会发麻，第一次吃的人很多都受不了，所以你点菜的时候记得说微辣或者不辣。',
+    ko: '한국 분들이 청두에 처음 오시면 저는 보통 콴자이샹쯔부터 둘러보시라고 권해요. 거기가 좀 상업적이긴 한데 옛 청두 분위기를 대충 느낄 수 있거든요. 저녁엔 진리에서 간식을 드시면 되는데, 주의하실 건 쓰촨의 매운맛과 한국의 매운맛이 완전히 다르다는 거예요. 여기는 마라라서 먹고 나면 혀가 얼얼해져요. 처음 드시는 분들은 대부분 못 견디니까 주문하실 때 덜 맵게나 안 맵게 해달라고 하세요.',
+  },
+  {
+    tag: '장문 · 숫자·금액 다수',
+    cn: '我们初步算了一下，如果按照现在的方案来做，硬件采购大概需要八万块，软件授权一年是三万六千块，然后人力成本按六个人算，三个月大概是二十七万。加起来总共差不多三十八万六千块，这还不包括后期维护的费用。如果预算实在紧张的话，硬件那部分可以先租不买，一个月大概五千块，这样前期投入能压到三十万以内。',
+    ko: '대략 계산해봤는데, 현재 방안대로 하면 하드웨어 구매에 약 8만 위안, 소프트웨어 라이선스가 연 3만 6천 위안, 인건비는 6명 기준 3개월에 약 27만 위안입니다. 합치면 총 38만 6천 위안 정도이고, 여기에 유지보수 비용은 포함되지 않았습니다. 예산이 정 빠듯하면 하드웨어는 우선 임대로 돌릴 수 있는데 월 5천 위안 정도라, 초기 투자를 30만 위안 이내로 낮출 수 있습니다.',
+  },
+
+  // ─── 초장문 (60초 세션 교대 테스트) ───
+  {
+    tag: '초장문 · 프로젝트 브리핑',
+    cn: '好，那我把这个项目的整体情况从头到尾梳理一遍。首先是背景，这个项目最早是去年下半年立项的，当时的判断是市场上二次元题材还有空间，所以我们决定做一款偏养成方向的产品。研发阶段大概走了十个月，中间经历过两次比较大的方向调整，第一次是把原本的横版战斗改成了竖版，因为测试数据显示竖版的留存明显更好；第二次是把付费点从抽卡为主调整成了通行证加皮肤，这个决定当时内部争议挺大的，不过从后来的数据看是对的。然后是现在的状态，我们上个月完成了第二次删档测试，参与人数大概三万人，次日留存百分之五十二，七日留存百分之二十三，付费率百分之四点五，这几个数字在同类产品里算是中上水平。接下来三个月的计划是把新手引导和中期内容再打磨一轮，然后争取在第三季度拿到版号，年底之前正式上线。',
+    ko: '네, 그럼 이 프로젝트의 전체 상황을 처음부터 끝까지 정리해보겠습니다. 먼저 배경입니다. 이 프로젝트는 작년 하반기에 승인됐고, 당시 판단은 시장에 서브컬처 장르가 아직 여지가 있다는 것이었습니다. 그래서 육성 중심 제품을 만들기로 했습니다. 개발 단계는 약 10개월 걸렸고, 중간에 두 번의 큰 방향 전환이 있었습니다. 첫 번째는 원래 횡스크롤 전투를 세로 화면으로 바꾼 것인데, 테스트 데이터상 세로 쪽 잔존율이 확실히 좋았기 때문입니다. 두 번째는 과금 포인트를 가챠 중심에서 배틀패스와 스킨으로 바꾼 것으로, 당시 내부 논란이 컸지만 이후 데이터를 보면 옳은 결정이었습니다. 다음은 현재 상태입니다. 지난달 2차 데이터 초기화 테스트를 완료했고 참여 인원은 약 3만 명, 1일 잔존율 52%, 7일 잔존율 23%, 결제율 4.5%로 동종 제품 중에서는 중상위권입니다. 향후 3개월 계획은 튜토리얼과 중반 콘텐츠를 한 차례 더 다듬고, 3분기 안에 판호를 받아 연말 전에 정식 출시하는 것입니다.',
+  },
+  {
+    tag: '초장문 · 협상·조건 논의',
+    cn: '关于合作模式，我想我们可以先把几个关键条款过一遍，然后看看有没有分歧的地方。第一是区域，我们希望拿到的是中国大陆的独家发行权，包括所有安卓渠道和苹果商店，这一点应该没有问题。第二是期限，我们建议签三年，从正式上线那天开始算，到期以后如果双方都满意可以自动续约两年。第三是分成比例，这个可能是重点，我们这边的提议是扣除渠道费之后按五五分，但是前六个月因为推广投入比较大，我们希望能拿到六成，从第七个月开始恢复到五五。第四是预付款，我们可以在签约后三十天内支付一百万，这笔钱可以从后续的分成里扣。最后是版号，这个我们来负责申请和推进，不过需要你们配合提供一些材料，通常整个流程要四到六个月，所以建议我们现在就开始准备。',
+    ko: '협력 방식에 대해, 우선 핵심 조항 몇 가지를 살펴보고 이견이 있는 부분을 확인해보면 좋겠습니다. 첫째는 지역입니다. 저희는 중국 본토 독점 퍼블리싱 권한을 원하며, 모든 안드로이드 채널과 앱스토어를 포함합니다. 이 부분은 문제없을 것 같습니다. 둘째는 기간입니다. 정식 출시일부터 3년을 제안드리며, 만료 후 양측이 만족하면 2년 자동 연장하는 방식입니다. 셋째는 수익 배분 비율인데 이게 아마 핵심일 겁니다. 저희 제안은 채널 수수료를 제외한 후 5:5인데, 다만 첫 6개월은 프로모션 투자가 크기 때문에 6할을 받고 7개월째부터 5:5로 돌아가는 안입니다. 넷째는 선급금입니다. 계약 후 30일 이내에 100만을 지급할 수 있고, 이 금액은 이후 배분에서 차감됩니다. 마지막은 판호인데, 이건 저희가 신청과 진행을 맡겠습니다. 다만 자료 제공에 협조가 필요하고 보통 전체 절차에 4~6개월이 걸리니 지금부터 준비하시길 권합니다.',
+  },
+  {
+    tag: '초장문 · 현지 생활 안내',
+    cn: '既然你要在成都待四个月，那我跟你说一些实际的东西，可能对你有帮助。先说吃的，成都的辣和你们韩国的辣完全是两回事，我们这边讲究的是麻，就是花椒带来的那种舌头发麻的感觉，第一次吃的外国人基本上都受不了，所以你点菜的时候一定要说微辣或者不辣，服务员听了不会觉得奇怪的。然后是天气，成都一年里晴天不多，春秋两季还行，夏天闷热冬天湿冷，湿度常年在百分之七十以上，你从韩国过来可能会觉得衣服晾不干，建议买个除湿机。交通方面地铁很方便，基本上市区哪里都能到，打车的话用滴滴，比路边拦车便宜也安全。生活上你需要办一张本地的手机卡，然后绑定微信和支付宝，这边几乎所有地方都是扫码支付，现金用得非常少，有时候小店连零钱都找不开。最后一点，如果周末有空可以去周边转转，青城山和都江堰坐高铁一个小时就到，风景挺不错的。',
+    ko: '청두에 4개월 계신다니 실질적으로 도움될 만한 것들을 말씀드릴게요. 먼저 음식인데, 청두의 매운맛과 한국의 매운맛은 완전히 다릅니다. 여기는 마(麻)를 중시하는데 화자오가 주는 혀가 얼얼해지는 느낌이에요. 처음 드시는 외국인은 대부분 못 견디니 주문하실 때 꼭 덜 맵게 또는 안 맵게 해달라고 하세요. 직원이 이상하게 생각하지 않습니다. 다음은 날씨입니다. 청두는 일 년 중 맑은 날이 많지 않고 봄가을은 괜찮지만 여름은 무덥고 겨울은 습하고 춥습니다. 습도가 연중 70% 이상이라 한국에서 오시면 빨래가 잘 안 마른다고 느끼실 거예요. 제습기 하나 사시길 권합니다. 교통은 지하철이 아주 편해서 시내는 거의 다 갈 수 있고, 택시는 디디를 쓰시면 길에서 잡는 것보다 싸고 안전합니다. 생활 면에서는 현지 유심을 하나 만드시고 위챗과 알리페이에 연동하셔야 합니다. 여기는 거의 모든 곳이 QR 결제라 현금은 잘 안 쓰고, 작은 가게는 거스름돈도 없는 경우가 있어요. 마지막으로 주말에 시간 되시면 근교를 둘러보세요. 칭청산과 두장옌은 고속철로 한 시간이면 가고 경치가 꽤 좋습니다.',
+  },
+];
+
+const $list = document.getElementById('list');
+const $voice = document.getElementById('voice');
+const $rate = document.getElementById('rate');
+const $rateVal = document.getElementById('rate-val');
+const $warn = document.getElementById('warn');
+let voices = [];
+
+function loadVoices() {
+  voices = speechSynthesis.getVoices().filter(v => /^zh/i.test(v.lang));
+  $voice.innerHTML = '';
+  if (!voices.length) { $warn.style.display = 'block'; return; }
+  $warn.style.display = 'none';
+  voices.forEach((v, i) => {
+    const o = document.createElement('option');
+    o.value = i;
+    o.textContent = `${v.name} (${v.lang})`;
+    $voice.appendChild(o);
+  });
+}
+speechSynthesis.onvoiceschanged = loadVoices;
+loadVoices();
+
+$rate.addEventListener('input', () => { $rateVal.textContent = $rate.value; });
+
+function speak(text, card) {
+  speechSynthesis.cancel();
+  document.querySelectorAll('.item').forEach(el => el.classList.remove('playing'));
+  const u = new SpeechSynthesisUtterance(text);
+  const v = voices[$voice.value];
+  if (v) u.voice = v;
+  u.lang = 'zh-CN';
+  u.rate = parseFloat($rate.value);
+  u.onstart = () => card.classList.add('playing');
+  u.onend = () => card.classList.remove('playing');
+  speechSynthesis.speak(u);
+}
+
+SENTENCES.forEach(s => {
+  const card = document.createElement('div');
+  card.className = 'item';
+  card.innerHTML = `
+    <span class="tag">${s.tag}</span>
+    <div class="cn">${s.cn}</div>
+    <div class="ko">기대 번역 · ${s.ko}</div>
+    <div class="row">
+      <button class="primary">재생</button>
+      <span class="len">${s.cn.length}자 · 약 ${Math.round(s.cn.length * 0.18)}초</span>
+    </div>`;
+  card.querySelector('button').addEventListener('click', () => speak(s.cn, card));
+  $list.appendChild(card);
+});
+
+const $now = document.getElementById('now');
+let queue = [];
+
+// 대화가 이어지는 상황 재현 — 문장 사이 2초 간격
+function playQueue() {
+  if (!queue.length) { $now.textContent = ''; return; }
+  const { s, card } = queue.shift();
+  $now.textContent = `${s.tag} (남은 ${queue.length}개)`;
+  speechSynthesis.cancel();
+  document.querySelectorAll('.item').forEach(el => el.classList.remove('playing'));
+
+  const u = new SpeechSynthesisUtterance(s.cn);
+  const v = voices[$voice.value];
+  if (v) u.voice = v;
+  u.lang = 'zh-CN';
+  u.rate = parseFloat($rate.value);
+  u.onstart = () => {
+    card.classList.add('playing');
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+  u.onend = () => {
+    card.classList.remove('playing');
+    setTimeout(playQueue, 2000);   // 다음 발화까지 잠시 쉼
+  };
+  speechSynthesis.speak(u);
+}
+
+document.getElementById('play-all').addEventListener('click', () => {
+  const cards = [...document.querySelectorAll('.item')];
+  queue = SENTENCES.map((s, i) => ({ s, card: cards[i] }));
+  playQueue();
+});
+
+document.getElementById('stop').addEventListener('click', () => {
+  queue = [];
+  $now.textContent = '';
+  speechSynthesis.cancel();
+  document.querySelectorAll('.item').forEach(el => el.classList.remove('playing'));
+});
+</script>
+</body>
+</html>

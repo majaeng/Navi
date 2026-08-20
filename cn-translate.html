@@ -82,12 +82,17 @@
       overflow: hidden;
     }
 
-    /* 번역 한국어 (주 정보) */
+    /* 번역 한국어 (주 정보)
+       긴 번역이 화면을 넘치지 않도록 5줄까지만 표시하고
+       뒷부분을 보여준다(대화는 최신 내용이 중요) */
     .translated-text {
       font-size: 30px; font-weight: 600; color: var(--ink-1);
       line-height: 1.42; word-break: keep-all;
       letter-spacing: -0.3px;
       transition: opacity 250ms;
+      max-height: calc(30px * 1.42 * 5);
+      overflow: hidden;
+      display: flex; flex-direction: column-reverse;   /* 아래(최신)부터 채움 */
     }
     .translated-text.empty {
       color: var(--ink-3); font-weight: 400; font-size: 19px;
@@ -232,6 +237,9 @@
   const MIN_CHARS = 4;             // 번역 시작 최소 길이
   const GROW_CHARS = 4;            // 이만큼 늘어야 다시 번역
   let papagoFails = 0;             // 파파고 연속 실패 횟수
+  let papagoBlockedAt = 0;         // 파파고를 건너뛰기 시작한 시각
+  let flytekMtBroken = false;      // iFlytek 번역 사용 불가 (미구독 등)
+  const PAPAGO_RETRY_MS = 20000;   // 20초 뒤에는 반드시 재시도
   let cnyToKrw = null; // 환율 캐시
 
   // ── 환율 로드 (앱 시작시 1회) ──
@@ -496,8 +504,12 @@
   }
 
   async function translateVia(text) {
-    // 파파고가 최근에 연속 실패했으면 건너뛰고 바로 iFlytek 사용
-    if (papagoFails < 3) {
+    // 파파고를 건너뛸지 판단. 단, 일정 시간이 지나면 반드시 다시 시도한다
+    // (한 번 실패했다고 영영 포기하면 번역이 완전히 멈춰버림)
+    const skipPapago = papagoFails >= 3 && (Date.now() - papagoBlockedAt) < PAPAGO_RETRY_MS;
+
+    if (!skipPapago) {
+      if (papagoFails >= 3) papagoFails = 2;   // 재시도 기회 부여
       try {
         const t = await papagoTranslate(text);
         if (t) { papagoFails = 0; return t; }
@@ -505,13 +517,27 @@
       } catch(e) {
         papagoFails++;
       }
+      if (papagoFails >= 3) papagoBlockedAt = Date.now();
     }
-    const t2 = await flytekTranslate(text);
-    if (t2 && papagoFails === 3) {
-      showToast('번역 엔진 전환 (讯飞)');
-      papagoFails++;   // 토스트 1회만
+
+    // 보조 엔진 (iFlytek 번역) — 구독 안 돼 있으면 빈 값이 온다
+    if (!flytekMtBroken) {
+      try {
+        const t2 = await flytekTranslate(text);
+        if (t2) return t2;
+        flytekMtBroken = true;    // 한 번 실패하면 더 호출하지 않음
+      } catch(e) {
+        flytekMtBroken = true;
+      }
     }
-    return t2;
+
+    // 보조 엔진도 못 쓰면 파파고를 한 번 더 시도 (마지막 수단)
+    try {
+      const t3 = await papagoTranslate(text);
+      if (t3) { papagoFails = 0; return t3; }
+    } catch(e) {}
+
+    return '';
   }
 
   // ── 용어 사전 ──
@@ -580,6 +606,12 @@
       const translated = await translateVia(text);
       // 더 최신 요청이 이미 도착했으면 이 결과는 버림
       if (seq !== transSeq) return;
+
+      // 모든 엔진이 실패 — 조용히 멈추지 말고 알림
+      if (!translated) {
+        dbg.lastErr = '번역 실패 (모든 엔진)';
+        showToast('번역 서버 응답 없음');
+      }
 
       if (translated) {
         showTranslation(translated, isFinal);
@@ -735,6 +767,9 @@
     };
 
     sock.onmessage = ev => {
+      // 교대로 물러난 이전 세션의 결과는 무시.
+      // (안 그러면 새 세션의 누적 문장을 덮어써서 번역이 깨짐)
+      if (flySocket && sock !== flySocket) return;
       dbg.recv++;
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
@@ -872,6 +907,9 @@
     //  · 직전 번역 이후 4자 이상 늘었을 때만
     //  · 이전 요청이 처리 중이면 건너뜀
     if (text.length < MIN_CHARS) return;
+    // 문장이 짧아졌다 = 새 발화가 시작된 것. 기준을 초기화하지 않으면
+    // 이후 조건이 영영 성립하지 않아 번역이 멈춘다.
+    if (text.length < lastSentLen) lastSentLen = 0;
     if (text.length - lastSentLen < GROW_CHARS) return;
     if (transInFlight) return;
 
