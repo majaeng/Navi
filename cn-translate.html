@@ -205,9 +205,9 @@
   let peakTracker = 0;               // 최근 최대 진폭
   const TARGET_PEAK = 0.35;          // 증폭 목표 레벨
   const MAX_GAIN = 12;               // 최대 증폭 배율 (높이면 잡음까지 커져 인식 방해)
-  // 세션 재연결에 2~3초가 걸리므로 그동안의 음성을 모두 보관해야
-  // 단어가 잘리지 않는다 (한 청크 ≈ 0.26초)
-  const PREROLL_CHUNKS = 20;         // 약 5초 분량 보관
+  // 세션이 끊긴 사이의 음성만 보관한다.
+  // 너무 크게 잡으면 이미 처리된 음성까지 다시 보내 중복 번역이 된다.
+  const PREROLL_CHUNKS = 6;          // 약 1.5초 분량
   let flyReopen = null;            // 세션 재연결 타이머
   let flyRotate = null;            // 60초 만료 전 교대 타이머
   let flyAppId = '';
@@ -918,6 +918,9 @@
         dbg.session = '완료';
         flySocket = null;
         flyCarry = new Uint8Array(0);
+        // ★ 여기까지의 음성은 이미 처리됐다. 버퍼를 비우지 않으면
+        //   다음 세션에 같은 음성을 다시 보내 같은 말이 두 번 번역된다.
+        flyPreroll = [];
         clearTimeout(flyRotate);
         setTimeout(() => { try { sock.close(1000); } catch {} }, 100);
         // 말이 계속되고 있으면 곧바로 다음 세션을 연다.
