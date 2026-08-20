@@ -1471,6 +1471,11 @@
         input = out;
       }
 
+      // 무음 게이트 판단에 쓰려면 증폭 전에 미리 구해둔다
+      let sumRaw = 0;
+      for (let i = 0; i < input.length; i++) sumRaw += input[i] * input[i];
+      const rmsRaw = Math.sqrt(sumRaw / input.length);
+
       // ── 자동 증폭 ──
       // 입력이 작으면 키워서 인식률을 올린다. 최근 최대치를 기준으로
       // 목표 레벨에 맞추되, 급격한 변화를 막기 위해 서서히 조정.
@@ -1487,18 +1492,25 @@
       gain += (wantGain - gain) * (wantGain < gain ? 0.4 : 0.05);
       dbg.gain = gain;
 
+      // ── 무음 게이트 ──
+      // 말소리가 아닌 구간은 실제 무음으로 바꿔 보낸다.
+      // 안 그러면 세션이 열려 있는 동안 방 안의 미세한 소음까지
+      // 인식 엔진이 억지로 중국어로 만들어낸다.
+      const quiet = paced && dbg.thr > 0 && rmsRaw * gain < dbg.thr * 0.6;
+
       // Float32 (-1~1) → Int16 PCM (증폭 적용, 클리핑 방지)
       const pcm = new Int16Array(input.length);
-      for (let i = 0; i < input.length; i++) {
-        const s = Math.max(-1, Math.min(1, input[i] * gain));
-        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      if (!quiet) {
+        for (let i = 0; i < input.length; i++) {
+          const s = Math.max(-1, Math.min(1, input[i] * gain));
+          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
       }
+      dbg.quiet = quiet;
       if (!paced) { onChunk(pcm.buffer); return; }
 
       // ── 말소리 감지 (음량 기반) ──
-      let sum = 0;
-      for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
-      const rms = Math.sqrt(sum / input.length) * gain;   // 증폭 후 기준으로 판단
+      const rms = rmsRaw * gain;   // 증폭 후 기준으로 판단
       dbg.rms = rms;
       if (rms > dbg.peak) dbg.peak = rms;
 
