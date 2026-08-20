@@ -493,6 +493,7 @@
   let revealTimer = null;
   let revealLast = 0;        // 마지막 틱 시각 (시간 기준 계산용)
   let utteranceEnded = false; // 발화가 끝남 → 다음은 새 줄에서
+  let uttSegStart = 0;        // 이번 발화가 시작된 조각 위치 (되돌리기용)
 
   function enqueueReveal(text) {
     revealQueue.push(text);
@@ -1020,15 +1021,10 @@
       for (const c of (w.cw || [])) piece += c.w;
     }
 
-    // 순번이 되돌아갔다 = 새 세션이 시작된 것.
-    // 이전 조각이 남아 있으면 원문이 뒤엉키므로 비운다.
-    if (r.sn <= 1 && flySlices.length > 3) {
-      flySlices = [];
-      doneText = '';
-      sentSegs.clear();
-      lastSentLen = 0;
-      utteranceEnded = true;
-    }
+    // ※ 순번(sn)으로 새 세션을 판단하지 않는다.
+    //   wpgs는 앞부분을 고쳐쓸 때도 낮은 순번을 쓰기 때문에
+    //   오판해서 번역을 처음부터 다시 하게 되고 화면이 중복된다.
+    //   새 세션 판단은 소켓이 열릴 때(onopen)에만 한다.
 
     if (r.pgs === 'rpl' && Array.isArray(r.rg)) {
       // rg 구간을 잘라내고 교체
@@ -1054,9 +1050,22 @@
       pending = text.slice(doneText.length);
     } else if (doneText && doneText.startsWith(text)) {
       return;                       // 인식이 뒤로 물러남 — 무시
+    } else if (doneText) {
+      // 앞부분이 고쳐쓰였다(wpgs).
+      // 일치하는 앞부분은 살리고 달라진 뒤쪽만 다시 번역한다.
+      let i = 0;
+      const n = Math.min(doneText.length, text.length);
+      while (i < n && doneText[i] === text[i]) i++;
+
+      // 앞부분까지 통째로 바뀐 경우(공통 부분이 거의 없음)에는
+      // 화면에 이미 뿌린 이번 발화분도 함께 되돌려야 중복되지 않는다.
+      if (i < doneText.length * 0.5) {
+        rollbackUtterance();
+        i = 0;
+      }
+      doneText = text.slice(0, i);
+      pending = text.slice(i);
     } else {
-      // 앞부분이 고쳐쓰였다 → 처음부터 다시 (중복 방지)
-      if (doneText) { doneText = ''; segments = []; sentSegs.clear(); }
       pending = text;
     }
 
@@ -1131,11 +1140,24 @@
     }
   }
 
+  // 이번 발화에서 화면에 뿌린 내용을 되돌린다.
+  // (인식이 앞부분을 통째로 고쳐써서 다시 번역해야 할 때)
+  function rollbackUtterance() {
+    if (segments.length > uttSegStart) segments.length = uttSegStart;
+    sentSegs.clear();
+    revealQueue = [];
+    // 이전 발화까지만 남기고 다시 그린다
+    shownText = segments.join(' ');
+    paint();
+  }
+
   function emitSegment(translated) {
     // 새 발화면 줄을 바꿔 이전 대화와 시각적으로 분리한다
     let sep = '';
     if (utteranceEnded && shownText) { sep = '\n'; }
     else if (shownText) { sep = ' '; }
+    // 새 발화의 시작 지점을 기록 (되돌릴 때 여기까지만 남긴다)
+    if (utteranceEnded) uttSegStart = segments.length;
     utteranceEnded = false;
 
     segments.push(translated);
