@@ -227,35 +227,23 @@
   let lastOriginal = '';
   let lastTranslated = '';
   let lastSent = '';               // 같은 문장 중복 번역 방지
-  let lastSentLen = 0;             // 직전 번역 시점의 글자 수
-  // ── 병렬 번역 + 순서 보장 ──
-  // 파파고 왕복이 800ms라 하나씩 처리하면 조각마다 밀린다.
-  // 동시에 여러 개를 보내되, 화면에는 말한 순서대로만 내보낸다.
+  // ── 표시 상태 ──
+  // 문장을 쪼개지 않는다. 말하는 중인 문장 하나를 통째로 번역해 교체하고,
+  // 끝나면 확정해서 위로 올린다.
+  let lines = [];            // 확정된 문장들 (더는 바뀌지 않음)
+  let liveLine = '';         // 지금 말하는 중인 문장의 번역
+  let liveLen = 0;           // 마지막으로 번역을 보낸 시점의 원문 길이
+  let liveSeq = 0;           // 늦게 온 옛 응답을 걸러내는 순번
   let inFlight = 0;
-  let issued = 0;                  // 보낸 순번
-  let nextOut = 1;                 // 다음에 내보낼 순번
-  const pendingOut = new Map();    // 순번 → 번역 결과
-  const MAX_PARALLEL = 3;
-  const MIN_CHARS = 4;             // 번역 시작 최소 길이
+  const MAX_LINES = 8;       // 화면에 유지할 확정 문장 수
   const MIN_SOLID = 4;             // 이보다 짧은 조각은 소음으로 보고 버림
   const GROW_CHARS = 4;            // 이만큼 늘어야 다시 번역
   // ── 긴 발화 분할 ──
   // 누적 전체를 매번 번역하면 길어질수록 느려져 타임아웃이 난다.
   // 끝난 문장만 떼어 번역하고 결과를 이어 붙인다.
-  let doneText = '';               // 이미 번역한 원문 (위치 대신 텍스트로 추적)
-  const sentSegs = new Set();      // 이번 발화에서 이미 번역한 조각들
-  let segments = [];               // 확정된 번역 조각들
   const SENT_END = /[。！？；…]/;    // 문장 끝 (가장 좋은 분할점)
   const CLAUSE_END = /[，、]/;      // 절 끝 (차선책)
-  // 절 단위(쉼표)로 자르면 뜻이 온전하면서도 빨리 나온다.
   // 값이 작을수록 빠르고, 클수록 문맥이 살아난다.
-  const FIRST_SEG = 5;             // 첫 조각은 짧게 끊어 빨리 띄움
-  const SOFT_SEG = 12;             // 이후에는 절(쉼표) 단위로
-  // 강제 절단은 단어 한복판을 자를 수 있어 오역을 만든다
-  // (手机卡 → 手机 로 잘려 "차량등록증" 같은 번역이 나옴).
-  // 최후의 수단으로만 쓰도록 넉넉히 잡는다.
-  const MAX_SEG = 70;
-  const MAX_SEGMENTS = 12;         // 화면에 유지할 조각 수
   const REVEAL_MS = 50;            // 글자가 드러나는 간격 (작을수록 빠름)
   let voiceAt = 0;                 // 말이 시작된 시각 (지연 측정용)
   let papagoFails = 0;             // 파파고 연속 실패 횟수
@@ -489,99 +477,6 @@
     return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   }
 
-  // ── 글자 흘려보내기 ──
-  // 조각이 통째로 나타나면 2~3줄이 한 번에 튀어나와 읽기 힘들다.
-  // 도착한 조각을 큐에 넣고 조금씩 드러내면 눈이 따라갈 수 있다.
-  let revealQueue = [];      // 아직 드러내지 않은 글자들
-  let shownText = '';        // 현재 화면에 드러난 글자
-  let revealTimer = null;
-  let revealLast = 0;        // 마지막 틱 시각 (시간 기준 계산용)
-  let utteranceEnded = false; // 발화가 끝남 → 다음은 새 줄에서
-  let uttSegStart = 0;        // 이번 발화가 시작된 조각 위치 (되돌리기용)
-  let finishedText = '';      // 이미 마무리한 문장 (중복 종료신호 무시용)
-  let lastResultAt = 0;       // 직전 인식 결과가 온 시각
-  let prevTextLen = 0;        // 직전 인식 결과의 길이
-  // 짧은 멈춤은 말더듬이라 단어 한복판을 자르게 된다.
-  // 실측상 1.3초 이상이어야 실제 절 경계(쉼표 자리)와 일치했다.
-  const PAUSE_MS = 1300;
-
-  function enqueueReveal(text) {
-    revealQueue.push(text);
-    if (!revealTimer) {
-      revealLast = performance.now();
-      revealTimer = setInterval(revealTick, REVEAL_MS);
-    }
-  }
-
-  // 틱 횟수가 아니라 "흐른 시간"으로 글자 수를 정한다.
-  // 브라우저가 타이머를 늦추더라도(백그라운드 등) 속도가 유지된다.
-  function revealTick() {
-    if (!revealQueue.length) {
-      clearInterval(revealTimer); revealTimer = null;
-      return;
-    }
-    const now = performance.now();
-    const elapsed = now - revealLast;
-    revealLast = now;
-
-    // 밀리면 빨리 따라잡는다 (말이 빠를 때 뒤처지지 않게)
-    const backlog = revealQueue.join(' ').length;
-    const perChar = backlog > 80 ? REVEAL_MS / 4
-                  : backlog > 40 ? REVEAL_MS / 2
-                  : REVEAL_MS;
-    let take = Math.max(1, Math.min(30, Math.round(elapsed / perChar)));
-
-    let added = '';
-    while (take > 0 && revealQueue.length) {
-      const head = revealQueue[0];
-      const n = Math.min(take, head.length);
-      added += head.slice(0, n);
-      take -= n;
-      const rest = head.slice(n);
-      if (rest) revealQueue[0] = rest;
-      else {
-        revealQueue.shift();
-        if (revealQueue.length) revealQueue[0] = ' ' + revealQueue[0];
-      }
-    }
-
-    shownText += added;
-    paint();
-  }
-
-  function paint() {
-    $trans.textContent = shownText;
-    $trans.classList.remove('empty');
-    requestAnimationFrame(() => {
-      const lh = 30 * 1.45;
-      const max = $transWin.scrollHeight - $transWin.clientHeight;
-      $transWin.scrollTop = max > 0 ? Math.round(max / lh) * lh : 0;
-    });
-  }
-
-  // 오래된 내용은 잘라내 메모리·렌더 부담을 줄인다
-  function trimShown() {
-    const LIMIT = 400;
-    if (shownText.length > LIMIT) shownText = shownText.slice(-LIMIT);
-  }
-
-  function showTranslation(translated, isFinal, isSegment, order) {
-    if (!dbg.tTrans && voiceAt) dbg.tTrans = Math.round(performance.now() - voiceAt);
-    dbg.trans = translated;
-
-    if (!isSegment) {
-      // 짧은 발화 — 통째로 교체
-      shownText = ''; revealQueue = [];
-      segments = isFinal ? [translated] : [];
-      lastTranslated = translated;
-      enqueueReveal(translated);
-    } else {
-      // 조각 — 순서를 맞춰 내보냄
-      pendingOut.set(order, translated);
-      flushOrdered();
-    }
-  }
-
   // ── 번역 엔진 (파파고 우선 → iFlytek 폴백) ──
   // 파파고가 느리거나 막히면(중국 등) 자동으로 iFlytek으로 넘어감
   const PAPAGO_TIMEOUT = 3000;   // 조각이 최대 140자이므로 여유 있게
@@ -687,64 +582,47 @@
     }
   }
 
-  async function translate(text, isFinal, isSegment, order) {
-    text = applyFixes(text.trim());
-    if (!text) return;
+  // 번역만 담당한다. 화면 표시는 호출한 쪽에서 한다.
+  async function translateCurrent(text) {
+    text = (text || '').trim();
+    if (!text) return '';
     showTerms(text);
+
+    const amount = detectAmount(text);
+    amount ? showCurrency(amount) : hideCurrency();
 
     // 캐시 적중 → 네트워크 없이 즉시 (문장부호·어조사 차이는 무시)
     const key = normalize(text);
     const hit = transCache.get(key);
     if (hit) {
-      // 자주 쓰는 문장이 오래됐다고 밀려나지 않도록 최신으로 갱신
       if (!seedKeys.has(key)) {
         transCache.delete(key); transCache.set(key, hit); cacheDirty = true;
       }
-      showTranslation(hit, isFinal, isSegment, order);
-      const amount = detectAmount(text);
-      amount ? showCurrency(amount) : hideCurrency();
-      return;
+      return hit;
     }
-
-    // ※ 유사 문장 미리보기는 쓰지 않는다.
-    //   비슷한 번역을 먼저 띄웠다가 진짜 번역으로 바꾸면
-    //   글자가 한 번 더 바뀌어서 읽기가 힘들어진다.
 
     setStatus('translating', '번역 중...');
     try {
       const translated = await translateVia(text);
-
-      // 모든 엔진이 실패 — 조용히 멈추지 말고 알림.
-      // 순서 자리는 비워둬야 뒤 조각이 계속 흐른다.
       if (!translated) {
         dbg.lastErr = '번역 실패 (모든 엔진)';
         showToast('번역 서버 응답 없음');
-        if (isSegment) { pendingOut.set(order, ''); flushOrdered(); }
-        return;
+        return '';
       }
-
-      {
-        showTranslation(translated, isFinal, isSegment, order);
-
-        // 캐시에 저장 (다음에 같은 말이 나오면 즉시 표시)
-        transCache.set(normalize(text), translated);
-        cacheDirty = true;
-        // 넘치면 기본 표현은 남기고 오래된 것부터 정리
-        while (transCache.size > CACHE_MAX) {
-          for (const k of transCache.keys()) {
-            if (!seedKeys.has(k)) { transCache.delete(k); break; }
-          }
+      transCache.set(key, translated);
+      cacheDirty = true;
+      while (transCache.size > CACHE_MAX) {
+        for (const k of transCache.keys()) {
+          if (!seedKeys.has(k)) { transCache.delete(k); break; }
         }
-
-        // 금액 감지 → 환율 뱃지
-        const amount = detectAmount(text);
-        amount ? showCurrency(amount) : hideCurrency();
       }
+      return translated;
     } catch(e) {
       showToast('번역 오류 - 네트워크 확인');
-      if (isSegment) { pendingOut.set(order, ''); flushOrdered(); }
+      return '';
+    } finally {
+      if (isListening) setStatus('listening', '듣는 중...');
     }
-    if (isListening) setStatus('listening', '듣는 중...');
   }
 
   // ── 음성 인식 ──
@@ -896,11 +774,8 @@
       //   이전 조각을 지우지 않으면 앞부분만 덮이고 뒷부분은 옛것이 남아
       //   원문이 뒤엉킨다(번역 반복·오역의 원인).
       flySlices = [];
-      doneText = '';
-      sentSegs.clear();
-      lastSentLen = 0;
-      lastResultAt = 0; prevTextLen = 0; finishedText = '';
-      utteranceEnded = true;      // 새 세션 = 새 발화로 취급
+      finishedText = '';
+      liveLine = ''; liveLen = 0; liveSeq++;
 
       dbg.session = '열림'; dbg.frames = 0; dbg.recv = 0; dbg.lastErr = '-';
       setStatus('listening', '듣는 중...');
@@ -1055,245 +930,80 @@
 
     const isEnd = r.ls || data.status === 2;
 
-    // 이미 마무리한 문장과 같은 내용이 또 오면 무시한다.
-    // (종료 신호가 여러 번 오거나, 종료 후 같은 결과가 재전송되는 경우)
+    // 종료 신호가 여러 번 오는 경우가 있다 — 같은 문장이면 무시
     if (finishedText && finishedText.startsWith(text)) return;
 
-    // ── 어디까지 번역했는지 추적 ──
-    // iFlytek(wpgs)은 앞부분 인식 결과를 나중에 고쳐쓰기 때문에
-    // 위치(인덱스)로 추적하면 어긋나서 같은 구간을 또 번역하게 된다.
-    // 그래서 "이미 번역한 원문" 자체를 들고 접두사로 비교한다.
-    let pending;
-    // 문장이 끝나면 구두점이 뒤늦게 삽입된다.
-    // 글자 그대로 비교하면 "다른 문장"으로 오인해 화면을 되돌리고
-    // 처음부터 다시 번역하게 되므로, 구두점을 뺀 상태로 비교한다.
-    const matched = matchAfterPunct(doneText, text);
-    if (matched >= 0) {
-      pending = text.slice(matched);
-      doneText = text.slice(0, matched);
-    } else if (doneText && doneText.startsWith(text)) {
-      return;                       // 인식이 뒤로 물러남 — 무시
-    } else if (doneText) {
-      // 앞부분이 고쳐쓰였다(wpgs).
-      // 일치하는 앞부분은 살리고 달라진 뒤쪽만 다시 번역한다.
-      let i = 0;
-      const n = Math.min(doneText.length, text.length);
-      while (i < n && doneText[i] === text[i]) i++;
-
-      // 앞부분까지 통째로 바뀐 경우(공통 부분이 거의 없음)에는
-      // 화면에 이미 뿌린 이번 발화분도 함께 되돌려야 중복되지 않는다.
-      if (i < doneText.length * 0.5) {
-        rollbackUtterance();
-        i = 0;
-      }
-      doneText = text.slice(0, i);
-      pending = text.slice(i);
-    } else {
-      pending = text;
-    }
-
+    // ══════════════════════════════════════════
+    //  문장을 쪼개지 않는다.
+    //  중국어는 앞뒤 문맥이 있어야 번역되므로, 도중에 자르면
+    //  어떤 규칙을 써도 뜻이 깨진다.
+    //  대신 "지금 말하는 중인 문장"을 통째로 번역해 그 줄만 교체하고,
+    //  문장이 끝나면 그 줄을 확정해 위로 올린다.
+    // ══════════════════════════════════════════
     if (isEnd) {
-      // 종료 신호가 여러 번 오는 경우가 있다.
-      // 이미 마무리한 문장이면 다시 커밋하지 않는다(중복 출력의 원인).
-      if (finishedText && (text === finishedText || finishedText.startsWith(text))) return;
       finishedText = text;
-
-      // 남은 부분을 마무리 번역
-      if (pending.trim().length > 1) commitSegment(pending);
+      liveSeq++;                      // 진행 중이던 요청 무효화
+      translateLive(text, true);
       flySlices = [];
-      doneText = '';
-      sentSegs.clear();
-      // 발화가 끝났음을 표시 — 다음 발화는 새 줄에서 시작한다.
-      // (안 하면 이전 대화가 계속 이어붙어 뒤죽박죽으로 보인다)
-      utteranceEnded = true;
       return;
     }
 
-    // ── 말하는 중: 문장 단위로 끊어서 번역 ──
-    // 누적 전체를 매번 보내면 길어질수록 느려져 결국 타임아웃이 난다.
-    // 그래서 끝난 문장만 떼어내 번역하고, 그만큼 커서를 전진시킨다.
-    // ※ 파파고 왕복이 실측 800ms라, 직렬로 처리하면 조각마다 그만큼 밀린다.
-    //   여러 개를 동시에 보내되 표시 순서는 아래에서 보장한다.
-    if (inFlight >= MAX_PARALLEL) return;
-    if (pending.length < MIN_CHARS) return;
+    // 소음을 억지로 인식한 결과는 대개 아주 짧다
+    const solid = text.replace(/[。，、！？；：\s…]/g, '');
+    if (solid.length < MIN_SOLID) return;
 
-    // ※ "말이 멈추면 자른다"는 방식은 쓰지 않는다.
-    //   멈춘 시점이 단어 한복판일 수 있어 需求 → 需 / 求 처럼 쪼개진다.
-    //   분할은 아래 구 단위 규칙(chunkCut)이 전담한다.
-
-    // 1순위: 문장이 끝났으면 거기서 자름
-    let cut = lastBoundary(pending, SENT_END);
-
-    // 2순위: 문장이 안 끝났는데 길어지면 절(쉼표) 단위로.
-    // 첫 조각은 기다림이 길게 느껴지므로 더 짧게 끊어 빨리 띄운다.
-    const soft = segments.length === 0 ? FIRST_SEG : SOFT_SEG;
-    if (cut === 0 && pending.length >= soft) {
-      cut = lastBoundary(pending, CLAUSE_END);
-      // 접속어로 시작하는 절은 앞 절과 붙어야 뜻이 통한다.
-      // (예: "…微辣" / "或者不辣" 로 끊기면 번역이 엉킨다)
-      if (cut > 0 && startsWithConnector(pending.slice(cut))) cut = 0;
-      // 잘라낸 조각이 접속어로 끝나도 마찬가지
-      if (cut > 0 && endsWithConnector(pending.slice(0, cut))) cut = 0;
-    }
-
-    // 확정된 조각만 표시한다.
-    // 인식 중간결과를 미리 보여주면 글자가 계속 고쳐 쓰여서
-    // 오히려 읽기가 힘들어진다. (한 번 나온 글자는 바뀌지 않는다)
-    // 구두점이 없으면(중간 결과) 구 표지를 기준으로 끊는다
-    if (cut === 0) cut = chunkCut(pending);
-
-    if (cut > 0) {
-      commitSegment(pending.slice(0, cut));
-    }
+    // 의미 있게 자랐을 때만 다시 번역 (매 글자마다 보내면 낭비)
+    if (text.length - liveLen < GROW_CHARS) return;
+    if (inFlight > 0) return;          // 현재 문장은 한 번에 하나만
+    liveLen = text.length;
+    translateLive(text, false);
   }
 
-  // 조각을 확정 처리 — 같은 구간을 두 번 번역하지 않는다.
-  // 번역은 병렬로 보내지만, 화면에는 말한 순서대로만 내보낸다.
-  function commitSegment(seg) {
-    const t = seg.trim();
-    if (!t) return;
-    // 소음을 억지로 인식한 결과는 대개 아주 짧다.
-    // 문장부호를 뺀 실제 글자가 너무 적으면 버린다.
-    const solid = t.replace(/[。，、！？；：\s…]/g, '');
-    if (solid.length < MIN_SOLID) { doneText += seg; return; }
-    if (sentSegs.has(t)) { doneText += seg; return; }   // 이미 번역함
-    sentSegs.add(t);
-    doneText += seg;
-    lastSentLen = 0;
-
-    const order = ++issued;
+  // 지금 말하는 중인 문장을 통째로 번역한다.
+  // 늦게 도착한 옛 결과가 새 결과를 덮지 않도록 순번으로 걸러낸다.
+  async function translateLive(text, isFinal) {
+    const seq = ++liveSeq;
     inFlight++;
-    translate(t, true, true, order).finally(() => { inFlight--; });
+    try {
+      const t = await translateCurrent(applyFixes(text.trim()));
+      if (!t) return;
+      if (!isFinal && seq !== liveSeq) return;   // 더 최신 요청이 있으면 버림
+      if (isFinal) commitLine(t); else showLive(t);
+    } catch(e) {
+    } finally {
+      inFlight--;
+    }
   }
 
   // 순서가 된 것부터 화면에 내보낸다 (늦게 온 앞 조각을 기다림)
-  function flushOrdered() {
-    while (pendingOut.has(nextOut)) {
-      const txt = pendingOut.get(nextOut);
-      pendingOut.delete(nextOut);
-      nextOut++;
-      if (txt) emitSegment(txt);
-    }
+  // ── 화면 표시 ──
+  // 확정된 문장은 위에 고정되고, 지금 말하는 중인 문장만 아래에서 교체된다.
+  function renderLines() {
+    const all = liveLine ? lines.concat([liveLine]) : lines;
+    $trans.textContent = all.join('\n');
+    $trans.classList.toggle('empty', all.length === 0);
+    requestAnimationFrame(() => {
+      const lh = 30 * 1.45;
+      const max = $transWin.scrollHeight - $transWin.clientHeight;
+      $transWin.scrollTop = max > 0 ? Math.round(max / lh) * lh : 0;
+    });
   }
 
-  // 구두점을 무시하고 done 이 text 의 앞부분과 일치하는지 확인한다.
-  // 일치하면 text 에서 그 뒤가 시작되는 위치를 돌려준다. (없으면 -1)
-  const PUNCT_ONLY = /[。，、！？；：…\s]/;
-  function matchAfterPunct(done, text) {
-    if (!done) return 0;
-    let i = 0, j = 0;
-    while (i < done.length && j < text.length) {
-      if (PUNCT_ONLY.test(done[i])) { i++; continue; }
-      if (PUNCT_ONLY.test(text[j])) { j++; continue; }
-      if (done[i] !== text[j]) return -1;
-      i++; j++;
-    }
-    // done 의 남은 부분이 구두점뿐이어야 "일치"로 본다
-    while (i < done.length && PUNCT_ONLY.test(done[i])) i++;
-    if (i < done.length) return -1;
-    // text 쪽 구두점은 건너뛰어 다음 글자부터 시작
-    while (j < text.length && PUNCT_ONLY.test(text[j])) j++;
-    return j;
+  // 말하는 중 — 마지막 줄만 갱신
+  function showLive(t) {
+    liveLine = t;
+    lastTranslated = t;
+    renderLines();
   }
 
-  // 이번 발화에서 화면에 뿌린 내용을 되돌린다.
-  // (인식이 앞부분을 통째로 고쳐써서 다시 번역해야 할 때)
-  function rollbackUtterance() {
-    if (segments.length > uttSegStart) segments.length = uttSegStart;
-    sentSegs.clear();
-    revealQueue = [];
-    // 이전 발화까지만 남기고 다시 그린다
-    shownText = segments.join(' ');
-    paint();
-  }
-
-  function emitSegment(translated) {
-    // 새 발화면 줄을 바꿔 이전 대화와 시각적으로 분리한다
-    let sep = '';
-    if (utteranceEnded && shownText) { sep = '\n'; }
-    else if (shownText) { sep = ' '; }
-    // 새 발화의 시작 지점을 기록 (되돌릴 때 여기까지만 남긴다)
-    if (utteranceEnded) uttSegStart = segments.length;
-    utteranceEnded = false;
-
-    segments.push(translated);
-    if (segments.length > MAX_SEGMENTS) segments.shift();
-    lastTranslated = segments.join(' ');
-    trimShown();
-    enqueueReveal(sep + translated);
-  }
-
-  // 앞 절과 떨어지면 뜻이 무너지는 접속어들
-  const CONNECT_HEAD = ['或者','或是','还是','而且','并且','但是','可是','不过',
-                        '所以','因此','然后','接着','就是','也就是','以及','和',
-                        '跟','与','的话','的时候','之后','以后','之前','以前'];
-  const CONNECT_TAIL = ['因为','虽然','如果','要是','不但','不仅','既然','为了',
-                        '除了','由于','即使','就算','只要','只有','无论','不管'];
-
-  function startsWithConnector(s) {
-    const t = s.replace(/^[，、\s]+/, '');
-    return CONNECT_HEAD.some(c => t.startsWith(c));
-  }
-  function endsWithConnector(s) {
-    const t = s.replace(/[，、\s]+$/, '');
-    return CONNECT_TAIL.some(c => t.endsWith(c));
-  }
-
-  // ── 구두점 없이 끊기 ──
-  // iFlytek의 중간 인식 결과에는 구두점이 없다(문장이 끝나야 붙는다).
-  // 그래서 "다음 구가 시작되는 표지" 앞에서 자른다. 단어가 덜 깨진다.
-  const STARTERS = ['然后','所以','但是','可是','不过','而且','并且','如果','因为','虽然',
-    '就是','也就是','这边','那边','这个','那个','我觉得','我们','你们','他们','可能','应该',
-    '需要','建议','比如','另外','第一','第二','最后','其实','当然','反正','结果','接着',
-    '于是','至于','关于','对于','为了','除了','不但','不仅','只要','只有','无论','不管'];
-  const CHUNK = 13;        // 목표 조각 길이
-  const CHUNK_WIN = 7;     // 이 범위 안에서 좋은 자리를 찾는다
-  const TAIL_MIN = 6;      // 남는 꼬리가 이보다 짧으면 자르지 않고 기다린다
-  const HARD_MAX = 45;     // 구 표지가 전혀 없을 때만 이 길이에서 강제로 자름
-
-  // 조각 끝에 오면 안 되는 말들.
-  // 뒤에 올 내용을 받아야 뜻이 성립하므로, 여기서 끊으면 번역이 붕 뜬다.
-  // 예) "…我觉得" → "…라고 생각한다" (무엇을 생각하는지가 없음)
-  const DANGLING = ['我觉得','我想','我认为','觉得','认为','应该','需要','可能','必须',
-    '因为','如果','虽然','为了','除了','由于','要是','只要','只有','无论','不管',
-    '而且','并且','然后','所以','但是','可是','不过','就是','的','是','在','跟','和','与',
-    // 주어만 남으면 서술어가 없어 "나는 우리가…"처럼 잘린다
-    '我们','你们','他们','她们','咱们','大家','我','你','他','她','它',
-    // 부사·조동사도 뒤를 받아야 한다
-    '先','再','还','也','都','就','很','太','最','更','会','要','想','能','可以','已经','正在'];
-
-  function endsDangling(s) {
-    return DANGLING.some(d => s.endsWith(d));
-  }
-
-  function chunkCut(t) {
-    if (t.length < CHUNK + TAIL_MIN) return 0;
-    const lo = Math.max(3, CHUNK - CHUNK_WIN);
-    const hi = Math.min(t.length - TAIL_MIN, CHUNK + CHUNK_WIN);
-
-    // 구 표지 위치들을 모아 CHUNK에 가까운 순으로 검토하되,
-    // 앞부분이 어중간하게 끝나는 자리는 건너뛴다.
-    const cands = [];
-    for (let i = lo; i <= hi; i++) {
-      for (const st of STARTERS) {
-        if (t.startsWith(st, i)) { cands.push(i); break; }
-      }
-    }
-    cands.sort((a, b) => Math.abs(a - CHUNK) - Math.abs(b - CHUNK));
-    for (const i of cands) {
-      if (!endsDangling(t.slice(0, i))) return i;
-    }
-
-    // ★ 마땅한 자리가 없으면 자르지 않고 기다린다.
-    //   억지로 자르면 客户 → 客 / 户 처럼 단어가 쪼개져 오역이 된다.
-    //   너무 길어지면 그때만 어쩔 수 없이 자른다.
-    if (t.length >= HARD_MAX) {
-      for (let i = HARD_MAX; i > CHUNK; i--) {
-        if (!endsDangling(t.slice(0, i))) return i;
-      }
-      return HARD_MAX;
-    }
-    return 0;
+  // 문장 확정 — 그 줄을 고정하고 새 줄 준비
+  function commitLine(t) {
+    lines.push(t);
+    if (lines.length > MAX_LINES) lines.shift();
+    liveLine = '';
+    liveLen = 0;
+    lastTranslated = t;
+    renderLines();
   }
 
   // 마지막 구두점 위치 찾기 (그 다음 인덱스 반환)
@@ -1725,10 +1435,8 @@
       $trans.classList.add('empty');
       $prev.textContent = '';
       lastTranslated = '';
-      segments = []; doneText = ''; lastSentLen = 0; sentSegs.clear();
-      shownText = ''; revealQueue = [];
-      clearInterval(revealTimer); revealTimer = null;
-      pendingOut.clear(); issued = 0; nextOut = 1; inFlight = 0;
+      lines = []; liveLine = ''; liveLen = 0; liveSeq++; inFlight = 0;
+      finishedText = ''; renderLines();
       hideCurrency();
       $terms.classList.remove('show');
       e.preventDefault();
