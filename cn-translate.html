@@ -241,6 +241,8 @@
   const MAX_SEG = 28;              // 쉼표가 없어도 이 길이면 끊는다
                                    // (없으면 긴 문장에서 한참 아무것도 안 뜸)
   const MAX_SEGMENTS = 12;         // 화면에 유지할 조각 수
+  const REVEAL_MS = 50;            // 글자가 드러나는 간격 (작을수록 빠름)
+  let voiceAt = 0;                 // 말이 시작된 시각 (지연 측정용)
   let papagoFails = 0;             // 파파고 연속 실패 횟수
   let papagoBlockedAt = 0;         // 파파고를 건너뛰기 시작한 시각
   let flytekMtBroken = false;      // iFlytek 번역 사용 불가 (미구독 등)
@@ -324,6 +326,7 @@
   // ── 진단 패널 ──
   const dbg = {
     mic: '-', rms: 0, peak: 0, thr: 0, gain: 1, session: '없음',
+    tToken: 0, tOpen: 0, tRecog: 0, tTrans: 0,
     frames: 0, recv: 0, lastText: '-', lastErr: '-', trans: '-',
   };
   const $debug = document.getElementById('debug');
@@ -336,6 +339,7 @@
       `엔진 <b>${sttMode}</b>   세션 <b>${dbg.session}</b>   마이크 <b>${dbg.mic}</b>\n` +
       `음량 ${bar || '·'} ${dbg.rms.toFixed(4)} / 기준 ${dbg.thr.toFixed(4)}   증폭 <b>x${dbg.gain.toFixed(1)}</b>\n` +
       `보낸프레임 <b>${dbg.frames}</b>   받은응답 <b>${dbg.recv}</b>\n` +
+      `지연  연결 <b>${dbg.tOpen}</b>ms  인식 <b>${dbg.tRecog}</b>ms  번역 <b>${dbg.tTrans}</b>ms\n` +
       `인식 ${dbg.lastText}\n` +
       `번역 ${dbg.trans}\n` +
       (dbg.lastErr !== '-' ? `<span class="err">오류 ${dbg.lastErr}</span>` : '');
@@ -470,40 +474,70 @@
     return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   }
 
-  // 확정된 부분은 밝기를 고정하고, 아직 확정 안 된 꼬리만 흐리게.
-  // 전체를 껐다 켜면 이미 읽은 글자까지 깜빡여서 오히려 읽기 힘들어진다.
-  function render(tail) {
-    const fixed = segments.join(' ');
-    const html = esc(fixed) +
-      (tail ? (fixed ? ' ' : '') + `<span class="tail">${esc(tail)}</span>` : '');
-    $trans.innerHTML = html || '';
+  // ── 글자 흘려보내기 ──
+  // 조각이 통째로 나타나면 2~3줄이 한 번에 튀어나와 읽기 힘들다.
+  // 도착한 조각을 큐에 넣고 조금씩 드러내면 눈이 따라갈 수 있다.
+  let revealQueue = [];      // 아직 드러내지 않은 글자들
+  let shownText = '';        // 현재 화면에 드러난 글자
+  let revealTimer = null;
+
+  function enqueueReveal(text) {
+    revealQueue.push(text);
+    if (!revealTimer) revealTimer = setInterval(revealTick, REVEAL_MS);
+  }
+
+  function revealTick() {
+    if (!revealQueue.length) {
+      clearInterval(revealTimer); revealTimer = null;
+      return;
+    }
+    // 평소엔 한 글자씩. 밀리면 빨리 따라잡는다 (말이 빠를 때 뒤처지지 않게)
+    const backlog = revealQueue.join(' ').length;
+    const step = backlog > 80 ? 4 : backlog > 40 ? 2 : 1;
+
+    let head = revealQueue[0];
+    const take = head.slice(0, step);
+    head = head.slice(step);
+    if (head) revealQueue[0] = head;
+    else { revealQueue.shift(); if (revealQueue.length) revealQueue[0] = ' ' + revealQueue[0]; }
+
+    shownText += take;
+    paint();
+  }
+
+  function paint() {
+    $trans.textContent = shownText;
     $trans.classList.remove('empty');
     requestAnimationFrame(() => {
-      // 줄 높이의 배수로 맞춰야 글자가 반쯤 잘리지 않는다
       const lh = 30 * 1.45;
       const max = $transWin.scrollHeight - $transWin.clientHeight;
       $transWin.scrollTop = max > 0 ? Math.round(max / lh) * lh : 0;
     });
   }
 
+  // 오래된 내용은 잘라내 메모리·렌더 부담을 줄인다
+  function trimShown() {
+    const LIMIT = 400;
+    if (shownText.length > LIMIT) shownText = shownText.slice(-LIMIT);
+  }
+
   function showTranslation(translated, isFinal, isSegment) {
+    if (!dbg.tTrans && voiceAt) dbg.tTrans = Math.round(performance.now() - voiceAt);
     dbg.trans = translated;
 
     if (!isSegment) {
-      // 조각 번역이 아닌 경우 (짧은 발화) — 통째로 교체
-      if (isFinal && lastTranslated) $prev.textContent = lastTranslated;
-      lastTranslated = translated;
+      // 짧은 발화 — 통째로 교체
+      shownText = ''; revealQueue = [];
       segments = isFinal ? [translated] : [];
-      render(isFinal ? '' : translated);
-    } else if (isFinal) {
-      // 확정 조각 — 뒤에 이어 붙이고 꼬리를 지움
+      lastTranslated = translated;
+      enqueueReveal(translated);
+    } else {
+      // 확정 조각 — 뒤에 이어 붙임
       segments.push(translated);
       if (segments.length > MAX_SEGMENTS) segments.shift();
       lastTranslated = segments.join(' ');
-      render('');
-    } else {
-      // 미리보기 — 확정분은 그대로 두고 꼬리만 갱신
-      render(translated);
+      trimShown();
+      enqueueReveal((shownText ? ' ' : '') + translated);
     }
   }
 
@@ -765,6 +799,8 @@
   function onVoiceDetected() {
     if (flySocket || flyOpening) return;
     flyOpening = true;
+    voiceAt = performance.now();     // 말이 시작된 시각 (지연 측정 기준)
+    dbg.tRecog = 0; dbg.tTrans = 0;
     dbg.session = '연결중';
     // 연결이 매달려 있을 경우를 대비한 안전장치
     clearTimeout(flyOpenGuard);
@@ -774,18 +810,36 @@
 
   // iat는 한 세션당 최대 60초 + 말이 멈추면 자동 종료.
   // 긴 발화가 끊기지 않도록, 만료 전에 다음 세션을 미리 열어두고 이어붙임.
+  // 토큰을 미리 받아둔다 — 말이 시작된 뒤에 받으면 그만큼 늦어진다
+  let tokenCache = null;
+  async function fetchToken() {
+    const res = await fetch(IFLYTEK_AUTH_PROXY);
+    const data = await res.json();
+    if (!data?.url || !data?.app_id) throw new Error('no url');
+    return { ...data, at: Date.now() };
+  }
+  async function prefetchToken() {
+    try { tokenCache = await fetchToken(); } catch(e) {}
+  }
+  function tokenFresh() {
+    return tokenCache && (Date.now() - tokenCache.at) < 240000;  // 4분
+  }
+
   async function openFlySession(background) {
     let wsUrl, appId;
+    const t0 = performance.now();
     try {
-      const res = await fetch(IFLYTEK_AUTH_PROXY);
-      const data = await res.json();
-      wsUrl = data?.url; appId = data?.app_id;
-      if (!wsUrl || !appId) throw new Error('no url');
+      // 미리 받아둔 게 있으면 즉시 사용 (왕복 한 번 절약)
+      const tk = tokenFresh() ? tokenCache : await fetchToken();
+      tokenCache = null;
+      wsUrl = tk.url; appId = tk.app_id;
+      prefetchToken();          // 다음 세션용으로 미리 준비
     } catch(e) {
       flyOpening = false;
       if (!background) fallbackTo('aai', '인식 서버 연결 실패');
       return false;
     }
+    dbg.tToken = Math.round(performance.now() - t0);
 
     const sock = new WebSocket(wsUrl);
     let opened = false;
@@ -794,6 +848,7 @@
     sock.onopen = () => {
       opened = true;
       flyOpening = false;
+      dbg.tOpen = Math.round(performance.now() - t0);
       if (background) terminateFlySocket(flySocket);   // 이전 세션 마무리
       flySocket = sock;
       flyFirstFrame = true;
@@ -926,6 +981,7 @@
     const text = flySlices.join('').trim();
     if (!text) return;
 
+    if (!dbg.tRecog && voiceAt) dbg.tRecog = Math.round(performance.now() - voiceAt);
     dbg.lastText = text;
     $orig.textContent = text;
 
@@ -1391,6 +1447,8 @@
       $prev.textContent = '';
       lastTranslated = '';
       segments = []; doneText = ''; lastSentLen = 0; sentSegs.clear();
+      shownText = ''; revealQueue = [];
+      clearInterval(revealTimer); revealTimer = null;
       hideCurrency();
       $terms.classList.remove('show');
       e.preventDefault();
