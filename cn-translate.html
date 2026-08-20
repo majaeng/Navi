@@ -231,7 +231,6 @@
   // 문장을 쪼개지 않는다. 말하는 중인 문장 하나를 통째로 번역해 교체하고,
   // 끝나면 확정해서 위로 올린다.
   let lines = [];            // 확정된 문장들 (더는 바뀌지 않음)
-  let liveSeq = 0;           // 늦게 온 옛 응답을 걸러내는 순번
   let inFlight = 0;
   const MAX_LINES = 8;       // 화면에 유지할 확정 문장 수
   let lastCommitAt = 0;      // 마지막으로 화면에 올린 시각
@@ -774,7 +773,6 @@
       //   원문이 뒤엉킨다(번역 반복·오역의 원인).
       flySlices = [];
       finishedText = '';
-      liveSeq++;
 
       dbg.session = '열림'; dbg.frames = 0; dbg.recv = 0; dbg.lastErr = '-';
       setStatus('listening', '듣는 중...');
@@ -946,7 +944,6 @@
     // ══════════════════════════════════════════
     if (isEnd) {
       finishedText = text;
-      liveSeq++;                      // 진행 중이던 요청 무효화
       translateLive(text);
       flySlices = [];
       return;
@@ -957,19 +954,20 @@
     //   (듣고 있다는 표시는 상단 상태 점이 대신한다)
   }
 
-  // 문장이 끝났을 때 한 번만 번역해 화면에 올린다.
-  async function translateLive(text) {
-    const seq = ++liveSeq;
+  // 한 덩어리가 끝날 때마다 번역해 화면에 올린다.
+  // 번역은 동시에 보내되(빠르게), 화면에는 말한 순서대로 올린다.
+  // ※ 옛 결과를 버리면 안 된다. 각 덩어리는 모두 표시돼야 할 확정 내용이다.
+  let commitChain = Promise.resolve();
+  function translateLive(text) {
     inFlight++;
-    try {
-      const t = await translateCurrent(applyFixes(text.trim()));
-      if (!t) return;
-      if (seq !== liveSeq) return;      // 그 사이 새 문장이 시작됐으면 버림
-      commitLine(t);
-    } catch(e) {
-    } finally {
-      inFlight--;
-    }
+    const job = translateCurrent(applyFixes(text.trim()))
+      .catch(() => '')
+      .finally(() => { inFlight--; });
+
+    commitChain = commitChain
+      .then(() => job)
+      .then(t => { if (t) commitLine(t); })
+      .catch(() => {});
   }
 
   // ── 화면 표시 ──
@@ -1433,7 +1431,7 @@
       $trans.classList.add('empty');
       $prev.textContent = '';
       lastTranslated = '';
-      lines = []; liveSeq++; inFlight = 0;
+      lines = []; inFlight = 0; lastCommitAt = 0;
       finishedText = ''; renderLines();
       hideCurrency();
       $terms.classList.remove('show');
