@@ -236,6 +236,14 @@
   let transSeq = 0;                // 번역 응답 순서 보장
   const MIN_CHARS = 4;             // 번역 시작 최소 길이
   const GROW_CHARS = 4;            // 이만큼 늘어야 다시 번역
+  // ── 긴 발화 분할 ──
+  // 누적 전체를 매번 번역하면 길어질수록 느려져 타임아웃이 난다.
+  // 끝난 문장만 떼어 번역하고 결과를 이어 붙인다.
+  let doneUpTo = 0;                // 어디까지 번역했는지
+  let segments = [];               // 확정된 번역 조각들
+  const SENT_END = /[。！？；…]/;    // 문장 끝 부호
+  const MAX_SEG = 40;              // 부호 없이 이만큼 길어지면 강제 분할
+  const MAX_SEGMENTS = 12;         // 화면에 유지할 조각 수
   let papagoFails = 0;             // 파파고 연속 실패 횟수
   let papagoBlockedAt = 0;         // 파파고를 건너뛰기 시작한 시각
   let flytekMtBroken = false;      // iFlytek 번역 사용 불가 (미구독 등)
@@ -461,13 +469,29 @@
     return best;
   }
 
-  function showTranslation(translated, isFinal) {
+  // 확정 조각은 이어 붙이고, 미리보기 조각은 임시로 덧붙여 보여준다.
+  function showTranslation(translated, isFinal, isSegment) {
     dbg.trans = translated;
-    if (isFinal && lastTranslated) $prev.textContent = lastTranslated;
-    lastTranslated = translated;
-    $trans.textContent = translated;
+
+    if (!isSegment) {
+      // 조각 번역이 아닌 경우 (짧은 발화) — 통째로 교체
+      if (isFinal && lastTranslated) $prev.textContent = lastTranslated;
+      lastTranslated = translated;
+      segments = [];
+      $trans.textContent = translated;
+    } else if (isFinal) {
+      // 확정 조각 — 뒤에 이어 붙임
+      segments.push(translated);
+      if (segments.length > MAX_SEGMENTS) segments.shift();
+      lastTranslated = segments.join(' ');
+      $trans.textContent = lastTranslated;
+    } else {
+      // 미리보기 조각 — 확정분 뒤에 임시로 붙여서만 표시
+      $trans.textContent = (segments.join(' ') + ' ' + translated).trim();
+    }
+
     $trans.classList.remove('empty');
-    // 중간 번역은 흐리게, 확정되면 선명하게 — 아직 듣는 중임을 시각적으로 전달
+    // 중간 번역은 흐리게, 확정되면 선명하게
     $trans.classList.toggle('interim', !isFinal);
   }
 
@@ -575,7 +599,7 @@
     }
   }
 
-  async function translate(text, isFinal) {
+  async function translate(text, isFinal, isSegment) {
     text = applyFixes(text.trim());
     if (!text) return;
     showTerms(text);
@@ -588,7 +612,7 @@
       if (!seedKeys.has(key)) {
         transCache.delete(key); transCache.set(key, hit); cacheDirty = true;
       }
-      showTranslation(hit, isFinal);
+      showTranslation(hit, isFinal, isSegment);
       const amount = detectAmount(text);
       amount ? showCurrency(amount) : hideCurrency();
       return;
@@ -597,7 +621,7 @@
     // 정확히 일치하는 게 없으면, 비슷한 문장을 흐리게 먼저 보여줌.
     // (아래에서 진짜 번역이 도착하면 바로 교체됨)
     const guess = findSimilar(key);
-    if (guess) showTranslation(guess, false);
+    if (guess) showTranslation(guess, false, isSegment);
 
     const seq = ++transSeq;
     transInFlight = true;
@@ -614,7 +638,7 @@
       }
 
       if (translated) {
-        showTranslation(translated, isFinal);
+        showTranslation(translated, isFinal, isSegment);
 
         // 캐시에 저장 (다음에 같은 말이 나오면 즉시 표시)
         transCache.set(normalize(text), translated);
@@ -893,29 +917,61 @@
     dbg.lastText = text;
     $orig.textContent = text;
 
-    // 문장이 끝났으면 즉시 번역 (확정)
-    if (r.ls || data.status === 2) {
-      if (text.length > 1 && text !== lastSent) { lastSent = text; translate(text, true); }
+    const isEnd = r.ls || data.status === 2;
+
+    // 새 발화가 시작되면(문장이 짧아짐) 기준 초기화
+    if (text.length < doneUpTo) { doneUpTo = 0; segments = []; }
+
+    // 아직 번역하지 않은 뒷부분
+    const pending = text.slice(doneUpTo);
+
+    if (isEnd) {
+      // 남은 부분을 마무리 번역
+      if (pending.trim().length > 1) translateSegment(pending, true);
       flySlices = [];
-      lastSentLen = 0;
+      doneUpTo = 0;
       return;
     }
 
-    // ── 말하는 중 즉시 번역 ──
-    // 대기 없이 바로 번역하되, 깜빡임과 호출 폭증을 막기 위해
-    //  · 최소 길이(4자) 이상이고
-    //  · 직전 번역 이후 4자 이상 늘었을 때만
-    //  · 이전 요청이 처리 중이면 건너뜀
-    if (text.length < MIN_CHARS) return;
-    // 문장이 짧아졌다 = 새 발화가 시작된 것. 기준을 초기화하지 않으면
-    // 이후 조건이 영영 성립하지 않아 번역이 멈춘다.
-    if (text.length < lastSentLen) lastSentLen = 0;
-    if (text.length - lastSentLen < GROW_CHARS) return;
+    // ── 말하는 중: 문장 단위로 끊어서 번역 ──
+    // 누적 전체를 매번 보내면 길어질수록 느려져 결국 타임아웃이 난다.
+    // 그래서 끝난 문장만 떼어내 번역하고, 그만큼 커서를 전진시킨다.
     if (transInFlight) return;
+    if (pending.length < MIN_CHARS) return;
 
-    lastSent = text;
-    lastSentLen = text.length;
-    translate(text, false);
+    const cut = lastBoundary(pending);
+    if (cut > 0) {
+      // 문장 부호까지 잘라 번역 (확정 조각)
+      const seg = pending.slice(0, cut);
+      doneUpTo += cut;
+      translateSegment(seg, true);
+    } else if (pending.length >= MAX_SEG) {
+      // 부호 없이 너무 길어지면 잘라서라도 번역
+      const seg = pending.slice(0, MAX_SEG);
+      doneUpTo += MAX_SEG;
+      translateSegment(seg, true);
+    } else if (pending.length - lastSentLen >= GROW_CHARS) {
+      // 짧은 조각은 미리보기로만 (커서는 전진시키지 않음)
+      lastSentLen = pending.length;
+      translateSegment(pending, false);
+    }
+  }
+
+  // 문장 끝나는 위치 찾기 (마지막 구두점 다음)
+  function lastBoundary(s) {
+    let idx = -1;
+    for (let i = 0; i < s.length; i++) {
+      if (SENT_END.test(s[i])) idx = i;
+    }
+    return idx >= 0 ? idx + 1 : 0;
+  }
+
+  // 조각 번역 — 확정 조각은 누적해서 이어 붙인다
+  async function translateSegment(seg, isFinal) {
+    const t = seg.trim();
+    if (!t) return;
+    if (isFinal) lastSentLen = 0;
+    await translate(t, isFinal, true);
   }
 
   function stopFlytek() {
@@ -1305,6 +1361,7 @@
       $trans.classList.add('empty');
       $prev.textContent = '';
       lastTranslated = '';
+      segments = []; doneUpTo = 0; lastSentLen = 0;
       hideCurrency();
       $terms.classList.remove('show');
       e.preventDefault();
