@@ -498,6 +498,7 @@
   let revealLast = 0;        // 마지막 틱 시각 (시간 기준 계산용)
   let utteranceEnded = false; // 발화가 끝남 → 다음은 새 줄에서
   let uttSegStart = 0;        // 이번 발화가 시작된 조각 위치 (되돌리기용)
+  let finishedText = '';      // 이미 마무리한 문장 (중복 종료신호 무시용)
   let lastResultAt = 0;       // 직전 인식 결과가 온 시각
   let prevTextLen = 0;        // 직전 인식 결과의 길이
   // 짧은 멈춤은 말더듬이라 단어 한복판을 자르게 된다.
@@ -898,7 +899,7 @@
       doneText = '';
       sentSegs.clear();
       lastSentLen = 0;
-      lastResultAt = 0; prevTextLen = 0;
+      lastResultAt = 0; prevTextLen = 0; finishedText = '';
       utteranceEnded = true;      // 새 세션 = 새 발화로 취급
 
       dbg.session = '열림'; dbg.frames = 0; dbg.recv = 0; dbg.lastErr = '-';
@@ -1054,6 +1055,10 @@
 
     const isEnd = r.ls || data.status === 2;
 
+    // 이미 마무리한 문장과 같은 내용이 또 오면 무시한다.
+    // (종료 신호가 여러 번 오거나, 종료 후 같은 결과가 재전송되는 경우)
+    if (finishedText && finishedText.startsWith(text)) return;
+
     // ── 어디까지 번역했는지 추적 ──
     // iFlytek(wpgs)은 앞부분 인식 결과를 나중에 고쳐쓰기 때문에
     // 위치(인덱스)로 추적하면 어긋나서 같은 구간을 또 번역하게 된다.
@@ -1083,6 +1088,11 @@
     }
 
     if (isEnd) {
+      // 종료 신호가 여러 번 오는 경우가 있다.
+      // 이미 마무리한 문장이면 다시 커밋하지 않는다(중복 출력의 원인).
+      if (finishedText && (text === finishedText || finishedText.startsWith(text))) return;
+      finishedText = text;
+
       // 남은 부분을 마무리 번역
       if (pending.trim().length > 1) commitSegment(pending);
       flySlices = [];
