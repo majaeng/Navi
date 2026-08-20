@@ -241,8 +241,10 @@
   // 끝난 문장만 떼어 번역하고 결과를 이어 붙인다.
   let doneUpTo = 0;                // 어디까지 번역했는지
   let segments = [];               // 확정된 번역 조각들
-  const SENT_END = /[。！？；…]/;    // 문장 끝 부호
-  const MAX_SEG = 40;              // 부호 없이 이만큼 길어지면 강제 분할
+  const SENT_END = /[。！？；…]/;    // 문장 끝 (가장 좋은 분할점)
+  const CLAUSE_END = /[，、]/;      // 절 끝 (차선책)
+  const SOFT_SEG = 90;             // 이보다 길어지면 절 단위로도 자름
+  const MAX_SEG = 140;             // 여기까지는 통째로 (문맥 유지)
   const MAX_SEGMENTS = 12;         // 화면에 유지할 조각 수
   let papagoFails = 0;             // 파파고 연속 실패 횟수
   let papagoBlockedAt = 0;         // 파파고를 건너뛰기 시작한 시각
@@ -497,7 +499,7 @@
 
   // ── 번역 엔진 (파파고 우선 → iFlytek 폴백) ──
   // 파파고가 느리거나 막히면(중국 등) 자동으로 iFlytek으로 넘어감
-  const PAPAGO_TIMEOUT = 1800;   // 보통 0.3초면 오므로 넉넉한 편
+  const PAPAGO_TIMEOUT = 3000;   // 조각이 최대 140자이므로 여유 있게
 
   async function papagoTranslate(text) {
     const ctl = new AbortController();
@@ -939,14 +941,20 @@
     if (transInFlight) return;
     if (pending.length < MIN_CHARS) return;
 
-    const cut = lastBoundary(pending);
+    // 1순위: 문장이 끝났으면 거기서 자름
+    let cut = lastBoundary(pending, SENT_END);
+
+    // 2순위: 문장이 안 끝났는데 길어지면 절(쉼표) 단위로
+    if (cut === 0 && pending.length >= SOFT_SEG) {
+      cut = lastBoundary(pending, CLAUSE_END);
+    }
+
     if (cut > 0) {
-      // 문장 부호까지 잘라 번역 (확정 조각)
       const seg = pending.slice(0, cut);
       doneUpTo += cut;
       translateSegment(seg, true);
     } else if (pending.length >= MAX_SEG) {
-      // 부호 없이 너무 길어지면 잘라서라도 번역
+      // 부호가 전혀 없이 너무 길면 어쩔 수 없이 자름
       const seg = pending.slice(0, MAX_SEG);
       doneUpTo += MAX_SEG;
       translateSegment(seg, true);
@@ -957,11 +965,11 @@
     }
   }
 
-  // 문장 끝나는 위치 찾기 (마지막 구두점 다음)
-  function lastBoundary(s) {
+  // 마지막 구두점 위치 찾기 (그 다음 인덱스 반환)
+  function lastBoundary(s, re) {
     let idx = -1;
     for (let i = 0; i < s.length; i++) {
-      if (SENT_END.test(s[i])) idx = i;
+      if (re.test(s[i])) idx = i;
     }
     return idx >= 0 ? idx + 1 : 0;
   }
