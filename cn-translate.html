@@ -532,12 +532,14 @@
 
   // 원문에 업계 용어가 있으면 화면에 힌트 표시 (최대 2개)
   function showTerms(text) {
-    const hits = [];
+    const hits = [], taken = [];
     for (const k of TERM_KEYS) {
-      if (text.includes(k)) {
-        hits.push(`${k} · ${TERMS[k]}`);
-        if (hits.length >= 2) break;
-      }
+      if (!text.includes(k)) continue;
+      // 이미 잡힌 용어에 포함되는 짧은 말은 건너뜀 (虚幻引擎 다음의 引擎)
+      if (taken.some(t => t.includes(k))) continue;
+      taken.push(k);
+      hits.push(`${k} · ${TERMS[k]}`);
+      if (hits.length >= 2) break;
     }
     if (hits.length) {
       $terms.textContent = hits.join('   ');
