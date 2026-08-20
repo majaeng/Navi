@@ -1225,19 +1225,40 @@
   const CHUNK_WIN = 7;     // 이 범위 안에서 좋은 자리를 찾는다
   const TAIL_MIN = 6;      // 남는 꼬리가 이보다 짧으면 자르지 않고 기다린다
 
+  // 조각 끝에 오면 안 되는 말들.
+  // 뒤에 올 내용을 받아야 뜻이 성립하므로, 여기서 끊으면 번역이 붕 뜬다.
+  // 예) "…我觉得" → "…라고 생각한다" (무엇을 생각하는지가 없음)
+  const DANGLING = ['我觉得','我想','我认为','觉得','认为','应该','需要','可能','必须',
+    '因为','如果','虽然','为了','除了','由于','要是','只要','只有','无论','不管',
+    '而且','并且','然后','所以','但是','可是','不过','就是','的','是','在','跟','和','与'];
+
+  function endsDangling(s) {
+    return DANGLING.some(d => s.endsWith(d));
+  }
+
   function chunkCut(t) {
     if (t.length < CHUNK + TAIL_MIN) return 0;
     const lo = Math.max(3, CHUNK - CHUNK_WIN);
     const hi = Math.min(t.length - TAIL_MIN, CHUNK + CHUNK_WIN);
-    let best = 0;
+
+    // 구 표지 위치들을 모아 CHUNK에 가까운 순으로 검토하되,
+    // 앞부분이 어중간하게 끝나는 자리는 건너뛴다.
+    const cands = [];
     for (let i = lo; i <= hi; i++) {
       for (const st of STARTERS) {
-        if (t.startsWith(st, i) && (best === 0 || Math.abs(i - CHUNK) < Math.abs(best - CHUNK))) {
-          best = i;
-        }
+        if (t.startsWith(st, i)) { cands.push(i); break; }
       }
     }
-    return best || CHUNK;
+    cands.sort((a, b) => Math.abs(a - CHUNK) - Math.abs(b - CHUNK));
+    for (const i of cands) {
+      if (!endsDangling(t.slice(0, i))) return i;
+    }
+
+    // 마땅한 자리가 없으면 기본 길이에서 자르되, 역시 어중간하면 조금 밀어본다
+    for (let i = CHUNK; i <= hi; i++) {
+      if (!endsDangling(t.slice(0, i))) return i;
+    }
+    return 0;   // 지금은 자르지 않고 더 기다린다
   }
 
   // 마지막 구두점 위치 찾기 (그 다음 인덱스 반환)
