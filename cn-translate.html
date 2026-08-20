@@ -1134,11 +1134,11 @@
     // 확정된 조각만 표시한다.
     // 인식 중간결과를 미리 보여주면 글자가 계속 고쳐 쓰여서
     // 오히려 읽기가 힘들어진다. (한 번 나온 글자는 바뀌지 않는다)
+    // 구두점이 없으면(중간 결과) 구 표지를 기준으로 끊는다
+    if (cut === 0) cut = chunkCut(pending);
+
     if (cut > 0) {
       commitSegment(pending.slice(0, cut));
-    } else if (pending.length >= MAX_SEG) {
-      // 부호가 전혀 없이 너무 길면 어쩔 수 없이 자름
-      commitSegment(pending.slice(0, MAX_SEG));
     }
   }
 
@@ -1212,6 +1212,32 @@
   function endsWithConnector(s) {
     const t = s.replace(/[，、\s]+$/, '');
     return CONNECT_TAIL.some(c => t.endsWith(c));
+  }
+
+  // ── 구두점 없이 끊기 ──
+  // iFlytek의 중간 인식 결과에는 구두점이 없다(문장이 끝나야 붙는다).
+  // 그래서 "다음 구가 시작되는 표지" 앞에서 자른다. 단어가 덜 깨진다.
+  const STARTERS = ['然后','所以','但是','可是','不过','而且','并且','如果','因为','虽然',
+    '就是','也就是','这边','那边','这个','那个','我觉得','我们','你们','他们','可能','应该',
+    '需要','建议','比如','另外','第一','第二','最后','其实','当然','反正','结果','接着',
+    '于是','至于','关于','对于','为了','除了','不但','不仅','只要','只有','无论','不管'];
+  const CHUNK = 13;        // 목표 조각 길이
+  const CHUNK_WIN = 7;     // 이 범위 안에서 좋은 자리를 찾는다
+  const TAIL_MIN = 6;      // 남는 꼬리가 이보다 짧으면 자르지 않고 기다린다
+
+  function chunkCut(t) {
+    if (t.length < CHUNK + TAIL_MIN) return 0;
+    const lo = Math.max(3, CHUNK - CHUNK_WIN);
+    const hi = Math.min(t.length - TAIL_MIN, CHUNK + CHUNK_WIN);
+    let best = 0;
+    for (let i = lo; i <= hi; i++) {
+      for (const st of STARTERS) {
+        if (t.startsWith(st, i) && (best === 0 || Math.abs(i - CHUNK) < Math.abs(best - CHUNK))) {
+          best = i;
+        }
+      }
+    }
+    return best || CHUNK;
   }
 
   // 마지막 구두점 위치 찾기 (그 다음 인덱스 반환)
