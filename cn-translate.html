@@ -234,6 +234,8 @@
   let liveSeq = 0;           // 늦게 온 옛 응답을 걸러내는 순번
   let inFlight = 0;
   const MAX_LINES = 8;       // 화면에 유지할 확정 문장 수
+  let lastCommitAt = 0;      // 마지막으로 화면에 올린 시각
+  const SAME_LINE_MS = 3000; // 이 안에 이어지면 같은 줄로 본다
   const MIN_SOLID = 4;             // 이보다 짧은 조각은 소음으로 보고 버림
   // ── 긴 발화 분할 ──
   // 누적 전체를 매번 번역하면 길어질수록 느려져 타임아웃이 난다.
@@ -883,10 +885,10 @@
         domain: 'iat',        // Short Form ASR
         accent: 'mandarin',   // 쓰촨 등 방언도 이 엔진이 흡수함
         dwa: 'wpgs',          // 스트리밍 중간결과 활성화
-        vad_eos: 1200,        // 1.2초 침묵 = 문장 끝.
-                              // 문장이 끝나야 화면에 띄우므로, 너무 길면
-                              // 출력이 한참 밀린다. 대화의 자연스러운
-                              // 문장 간격(약 1초)에 맞춘 값.
+        vad_eos: 600,         // 0.6초 침묵 = 한 덩어리 끝.
+                              // 사람은 쉼표 자리에서 자연스럽게 쉬므로,
+                              // 이 값이 곧 "절 단위 분할"이 된다.
+                              // 텍스트를 규칙으로 자르는 것보다 정확하다.
         ptt: 1,               // 구두점
       };
       flyFirstFrame = false;
@@ -983,10 +985,21 @@
   }
 
 
-  // 문장 확정 — 그 줄을 고정하고 새 줄 준비
+  // 번역 확정 — 화면에 추가한다.
+  // 짧은 쉼(0.6초)마다 끊기므로 조각이 잦다. 계속 이어 말하는 중이면
+  // 같은 줄에 이어붙이고, 충분히 쉬었으면 새 줄에서 시작한다.
   function commitLine(t) {
-    lines.push(t);
-    if (lines.length > MAX_LINES) lines.shift();
+    const now = performance.now();
+    const sameBreath = lines.length > 0 && (now - lastCommitAt) < SAME_LINE_MS;
+
+    if (sameBreath) {
+      const i = lines.length - 1;
+      lines[i] = (lines[i] + ' ' + t).trim();
+    } else {
+      lines.push(t);
+      if (lines.length > MAX_LINES) lines.shift();
+    }
+    lastCommitAt = now;
     lastTranslated = t;
     renderLines();
   }
