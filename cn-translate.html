@@ -222,8 +222,14 @@
   let lastTranslated = '';
   let lastSent = '';               // 같은 문장 중복 번역 방지
   let lastSentLen = 0;             // 직전 번역 시점의 글자 수
-  let transInFlight = false;       // 번역 요청 진행 중
-  let transSeq = 0;                // 번역 응답 순서 보장
+  // ── 병렬 번역 + 순서 보장 ──
+  // 파파고 왕복이 800ms라 하나씩 처리하면 조각마다 밀린다.
+  // 동시에 여러 개를 보내되, 화면에는 말한 순서대로만 내보낸다.
+  let inFlight = 0;
+  let issued = 0;                  // 보낸 순번
+  let nextOut = 1;                 // 다음에 내보낼 순번
+  const pendingOut = new Map();    // 순번 → 번역 결과
+  const MAX_PARALLEL = 3;
   const MIN_CHARS = 4;             // 번역 시작 최소 길이
   const GROW_CHARS = 4;            // 이만큼 늘어야 다시 번역
   // ── 긴 발화 분할 ──
@@ -521,7 +527,7 @@
     if (shownText.length > LIMIT) shownText = shownText.slice(-LIMIT);
   }
 
-  function showTranslation(translated, isFinal, isSegment) {
+  function showTranslation(translated, isFinal, isSegment, order) {
     if (!dbg.tTrans && voiceAt) dbg.tTrans = Math.round(performance.now() - voiceAt);
     dbg.trans = translated;
 
@@ -532,12 +538,9 @@
       lastTranslated = translated;
       enqueueReveal(translated);
     } else {
-      // 확정 조각 — 뒤에 이어 붙임
-      segments.push(translated);
-      if (segments.length > MAX_SEGMENTS) segments.shift();
-      lastTranslated = segments.join(' ');
-      trimShown();
-      enqueueReveal((shownText ? ' ' : '') + translated);
+      // 조각 — 순서를 맞춰 내보냄
+      pendingOut.set(order, translated);
+      flushOrdered();
     }
   }
 
@@ -646,7 +649,7 @@
     }
   }
 
-  async function translate(text, isFinal, isSegment) {
+  async function translate(text, isFinal, isSegment, order) {
     text = applyFixes(text.trim());
     if (!text) return;
     showTerms(text);
@@ -659,7 +662,7 @@
       if (!seedKeys.has(key)) {
         transCache.delete(key); transCache.set(key, hit); cacheDirty = true;
       }
-      showTranslation(hit, isFinal, isSegment);
+      showTranslation(hit, isFinal, isSegment, order);
       const amount = detectAmount(text);
       amount ? showCurrency(amount) : hideCurrency();
       return;
@@ -669,22 +672,21 @@
     //   비슷한 번역을 먼저 띄웠다가 진짜 번역으로 바꾸면
     //   글자가 한 번 더 바뀌어서 읽기가 힘들어진다.
 
-    const seq = ++transSeq;
-    transInFlight = true;
     setStatus('translating', '번역 중...');
     try {
       const translated = await translateVia(text);
-      // 더 최신 요청이 이미 도착했으면 이 결과는 버림
-      if (seq !== transSeq) return;
 
-      // 모든 엔진이 실패 — 조용히 멈추지 말고 알림
+      // 모든 엔진이 실패 — 조용히 멈추지 말고 알림.
+      // 순서 자리는 비워둬야 뒤 조각이 계속 흐른다.
       if (!translated) {
         dbg.lastErr = '번역 실패 (모든 엔진)';
         showToast('번역 서버 응답 없음');
+        if (isSegment) { pendingOut.set(order, ''); flushOrdered(); }
+        return;
       }
 
-      if (translated) {
-        showTranslation(translated, isFinal, isSegment);
+      {
+        showTranslation(translated, isFinal, isSegment, order);
 
         // 캐시에 저장 (다음에 같은 말이 나오면 즉시 표시)
         transCache.set(normalize(text), translated);
@@ -702,8 +704,7 @@
       }
     } catch(e) {
       showToast('번역 오류 - 네트워크 확인');
-    } finally {
-      transInFlight = false;
+      if (isSegment) { pendingOut.set(order, ''); flushOrdered(); }
     }
     if (isListening) setStatus('listening', '듣는 중...');
   }
@@ -1014,7 +1015,9 @@
     // ── 말하는 중: 문장 단위로 끊어서 번역 ──
     // 누적 전체를 매번 보내면 길어질수록 느려져 결국 타임아웃이 난다.
     // 그래서 끝난 문장만 떼어내 번역하고, 그만큼 커서를 전진시킨다.
-    if (transInFlight) return;
+    // ※ 파파고 왕복이 실측 800ms라, 직렬로 처리하면 조각마다 그만큼 밀린다.
+    //   여러 개를 동시에 보내되 표시 순서는 아래에서 보장한다.
+    if (inFlight >= MAX_PARALLEL) return;
     if (pending.length < MIN_CHARS) return;
 
     // 1순위: 문장이 끝났으면 거기서 자름
@@ -1038,7 +1041,8 @@
     }
   }
 
-  // 조각을 확정 처리 — 같은 구간을 두 번 번역하지 않는다
+  // 조각을 확정 처리 — 같은 구간을 두 번 번역하지 않는다.
+  // 번역은 병렬로 보내지만, 화면에는 말한 순서대로만 내보낸다.
   function commitSegment(seg) {
     const t = seg.trim();
     if (!t) return;
@@ -1046,7 +1050,28 @@
     sentSegs.add(t);
     doneText += seg;
     lastSentLen = 0;
-    translate(t, true, true);
+
+    const order = ++issued;
+    inFlight++;
+    translate(t, true, true, order).finally(() => { inFlight--; });
+  }
+
+  // 순서가 된 것부터 화면에 내보낸다 (늦게 온 앞 조각을 기다림)
+  function flushOrdered() {
+    while (pendingOut.has(nextOut)) {
+      const txt = pendingOut.get(nextOut);
+      pendingOut.delete(nextOut);
+      nextOut++;
+      if (txt) emitSegment(txt);
+    }
+  }
+
+  function emitSegment(translated) {
+    segments.push(translated);
+    if (segments.length > MAX_SEGMENTS) segments.shift();
+    lastTranslated = segments.join(' ');
+    trimShown();
+    enqueueReveal((shownText ? ' ' : '') + translated);
   }
 
   // 마지막 구두점 위치 찾기 (그 다음 인덱스 반환)
@@ -1449,6 +1474,7 @@
       segments = []; doneText = ''; lastSentLen = 0; sentSegs.clear();
       shownText = ''; revealQueue = [];
       clearInterval(revealTimer); revealTimer = null;
+      pendingOut.clear(); issued = 0; nextOut = 1; inFlight = 0;
       hideCurrency();
       $terms.classList.remove('show');
       e.preventDefault();
