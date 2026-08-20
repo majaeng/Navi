@@ -393,6 +393,66 @@
     if (document.visibilityState === 'hidden') saveCache();
   });
 
+  // ══════════════════════════════════════════
+  //  유사 문장 찾기 (미리보기용)
+  //
+  //  완전히 같지 않아도 비슷한 캐시 문장을 찾아 먼저 흐리게 보여준다.
+  //  진짜 번역이 도착하면 즉시 교체되므로 틀린 채로 남지 않는다.
+  //
+  //  ⚠️ 뜻이 뒤집히는 경우는 절대 매칭하지 않는다:
+  //     · 부정어(不/没/别/无/未) 유무가 다르면 제외
+  //     · 숫자가 다르면 제외
+  // ══════════════════════════════════════════
+  const NEG = /[不没别无未]/g;
+  const NUM = /[0-9零一二三四五六七八九十百千万亿两]/g;
+  const QUES = /[吗呢?？]|什么|怎么|为什么|哪儿|哪里|几点|多少/g;
+  const SIM_THRESHOLD = 0.72;   // 이 이상 비슷해야 미리보기
+
+  function signature(s) {
+    return {
+      neg: (s.match(NEG) || []).join(''),
+      num: (s.match(NUM) || []).join(''),
+      // 의문문과 평서문이 섞이지 않도록
+      ques: (s.match(QUES) || []).length > 0,
+    };
+  }
+
+  // 두 글자 묶음 기준 유사도 (0~1)
+  function similarity(a, b) {
+    if (a === b) return 1;
+    if (a.length < 2 || b.length < 2) return 0;
+    const grams = new Map();
+    for (let i = 0; i < a.length - 1; i++) {
+      const g = a.slice(i, i + 2);
+      grams.set(g, (grams.get(g) || 0) + 1);
+    }
+    let match = 0;
+    for (let i = 0; i < b.length - 1; i++) {
+      const g = b.slice(i, i + 2);
+      const c = grams.get(g);
+      if (c > 0) { grams.set(g, c - 1); match++; }
+    }
+    return (2 * match) / (a.length - 1 + b.length - 1);
+  }
+
+  function findSimilar(text) {
+    const sig = signature(text);
+    const len = text.length;
+    let best = null, bestScore = SIM_THRESHOLD;
+
+    for (const [k, v] of transCache) {
+      // 길이가 많이 다르면 건너뜀 (속도)
+      if (Math.abs(k.length - len) > Math.max(3, len * 0.4)) continue;
+      // 부정어·숫자가 다르면 뜻이 뒤집힐 수 있으므로 제외
+      const ks = signature(k);
+      if (ks.neg !== sig.neg || ks.num !== sig.num || ks.ques !== sig.ques) continue;
+
+      const s = similarity(text, k);
+      if (s > bestScore) { bestScore = s; best = v; }
+    }
+    return best;
+  }
+
   function showTranslation(translated, isFinal) {
     dbg.trans = translated;
     if (isFinal && lastTranslated) $prev.textContent = lastTranslated;
@@ -505,6 +565,11 @@
       amount ? showCurrency(amount) : hideCurrency();
       return;
     }
+
+    // 정확히 일치하는 게 없으면, 비슷한 문장을 흐리게 먼저 보여줌.
+    // (아래에서 진짜 번역이 도착하면 바로 교체됨)
+    const guess = findSimilar(key);
+    if (guess) showTranslation(guess, false);
 
     const seq = ++transSeq;
     transInFlight = true;
