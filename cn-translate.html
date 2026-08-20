@@ -231,13 +231,10 @@
   // 문장을 쪼개지 않는다. 말하는 중인 문장 하나를 통째로 번역해 교체하고,
   // 끝나면 확정해서 위로 올린다.
   let lines = [];            // 확정된 문장들 (더는 바뀌지 않음)
-  let liveLine = '';         // 지금 말하는 중인 문장의 번역
-  let liveLen = 0;           // 마지막으로 번역을 보낸 시점의 원문 길이
   let liveSeq = 0;           // 늦게 온 옛 응답을 걸러내는 순번
   let inFlight = 0;
   const MAX_LINES = 8;       // 화면에 유지할 확정 문장 수
   const MIN_SOLID = 4;             // 이보다 짧은 조각은 소음으로 보고 버림
-  const GROW_CHARS = 4;            // 이만큼 늘어야 다시 번역
   // ── 긴 발화 분할 ──
   // 누적 전체를 매번 번역하면 길어질수록 느려져 타임아웃이 난다.
   // 끝난 문장만 떼어 번역하고 결과를 이어 붙인다.
@@ -775,7 +772,7 @@
       //   원문이 뒤엉킨다(번역 반복·오역의 원인).
       flySlices = [];
       finishedText = '';
-      liveLine = ''; liveLen = 0; liveSeq++;
+      liveSeq++;
 
       dbg.session = '열림'; dbg.frames = 0; dbg.recv = 0; dbg.lastErr = '-';
       setStatus('listening', '듣는 중...');
@@ -886,10 +883,10 @@
         domain: 'iat',        // Short Form ASR
         accent: 'mandarin',   // 쓰촨 등 방언도 이 엔진이 흡수함
         dwa: 'wpgs',          // 스트리밍 중간결과 활성화
-        vad_eos: 3000,        // 3초 침묵 = 발화 종료.
-                              // 짧으면 세션이 자주 끊기고, 재연결 사이에
-                              // 음성이 유실돼 단어가 잘린다.
-                              // 화면 갱신은 조각 단위로 하므로 길어도 무방.
+        vad_eos: 1200,        // 1.2초 침묵 = 문장 끝.
+                              // 문장이 끝나야 화면에 띄우므로, 너무 길면
+                              // 출력이 한참 밀린다. 대화의 자연스러운
+                              // 문장 간격(약 1초)에 맞춘 값.
         ptt: 1,               // 구두점
       };
       flyFirstFrame = false;
@@ -928,6 +925,11 @@
     dbg.lastText = text;
     $orig.textContent = text;
 
+    // 화면에는 아직 안 띄우지만, 듣고 있다는 건 알려준다
+    if (!(r.ls || data.status === 2) && isListening) {
+      setStatus('listening', '듣는 중… ' + text.length + '자');
+    }
+
     const isEnd = r.ls || data.status === 2;
 
     // 종료 신호가 여러 번 오는 경우가 있다 — 같은 문장이면 무시
@@ -943,45 +945,36 @@
     if (isEnd) {
       finishedText = text;
       liveSeq++;                      // 진행 중이던 요청 무효화
-      translateLive(text, true);
+      translateLive(text);
       flySlices = [];
       return;
     }
 
-    // 소음을 억지로 인식한 결과는 대개 아주 짧다
-    const solid = text.replace(/[。，、！？；：\s…]/g, '');
-    if (solid.length < MIN_SOLID) return;
-
-    // 의미 있게 자랐을 때만 다시 번역 (매 글자마다 보내면 낭비)
-    if (text.length - liveLen < GROW_CHARS) return;
-    if (inFlight > 0) return;          // 현재 문장은 한 번에 하나만
-    liveLen = text.length;
-    translateLive(text, false);
+    // ※ 말하는 중에는 화면을 건드리지 않는다.
+    //   글자가 계속 바뀌면 읽기가 힘들다. 문장이 끝나면 한 번에 띄운다.
+    //   (듣고 있다는 표시는 상단 상태 점이 대신한다)
   }
 
-  // 지금 말하는 중인 문장을 통째로 번역한다.
-  // 늦게 도착한 옛 결과가 새 결과를 덮지 않도록 순번으로 걸러낸다.
-  async function translateLive(text, isFinal) {
+  // 문장이 끝났을 때 한 번만 번역해 화면에 올린다.
+  async function translateLive(text) {
     const seq = ++liveSeq;
     inFlight++;
     try {
       const t = await translateCurrent(applyFixes(text.trim()));
       if (!t) return;
-      if (!isFinal && seq !== liveSeq) return;   // 더 최신 요청이 있으면 버림
-      if (isFinal) commitLine(t); else showLive(t);
+      if (seq !== liveSeq) return;      // 그 사이 새 문장이 시작됐으면 버림
+      commitLine(t);
     } catch(e) {
     } finally {
       inFlight--;
     }
   }
 
-  // 순서가 된 것부터 화면에 내보낸다 (늦게 온 앞 조각을 기다림)
   // ── 화면 표시 ──
   // 확정된 문장은 위에 고정되고, 지금 말하는 중인 문장만 아래에서 교체된다.
   function renderLines() {
-    const all = liveLine ? lines.concat([liveLine]) : lines;
-    $trans.textContent = all.join('\n');
-    $trans.classList.toggle('empty', all.length === 0);
+    $trans.textContent = lines.join('\n');
+    $trans.classList.toggle('empty', lines.length === 0);
     requestAnimationFrame(() => {
       const lh = 30 * 1.45;
       const max = $transWin.scrollHeight - $transWin.clientHeight;
@@ -989,19 +982,11 @@
     });
   }
 
-  // 말하는 중 — 마지막 줄만 갱신
-  function showLive(t) {
-    liveLine = t;
-    lastTranslated = t;
-    renderLines();
-  }
 
   // 문장 확정 — 그 줄을 고정하고 새 줄 준비
   function commitLine(t) {
     lines.push(t);
     if (lines.length > MAX_LINES) lines.shift();
-    liveLine = '';
-    liveLen = 0;
     lastTranslated = t;
     renderLines();
   }
@@ -1435,7 +1420,7 @@
       $trans.classList.add('empty');
       $prev.textContent = '';
       lastTranslated = '';
-      lines = []; liveLine = ''; liveLen = 0; liveSeq++; inFlight = 0;
+      lines = []; liveSeq++; inFlight = 0;
       finishedText = ''; renderLines();
       hideCurrency();
       $terms.classList.remove('show');
