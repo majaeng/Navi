@@ -1392,12 +1392,24 @@
       dbg.rms = rms;
       if (rms > dbg.peak) dbg.peak = rms;
 
-      // 주변 소음 수준을 계속 추적 (조용할 때만 천천히 갱신)
-      if (rms < noiseFloor * 1.5 || noiseFloor === 0) {
-        noiseFloor = noiseFloor === 0 ? rms : noiseFloor * 0.95 + rms * 0.05;
+      // ── 주변 소음 수준 추적 ──
+      // ★ 반드시 "내려갈 땐 빠르게, 올라갈 땐 아주 느리게" 여야 한다.
+      //   말소리를 소음으로 학습하면 기준이 말소리보다 높아져
+      //   음성 감지가 영구히 죽는다.
+      if (noiseFloor === 0) {
+        noiseFloor = rms;
+      } else if (rms < noiseFloor) {
+        noiseFloor = noiseFloor * 0.85 + rms * 0.15;   // 조용해지면 빨리 따라감
+      } else {
+        noiseFloor *= 1.0002;                          // 시끄러워도 거의 안 오름
       }
-      // 소음 대비 3배 이상이면 말소리로 판단 (기기별 입력 편차 흡수)
-      const threshold = Math.max(noiseFloor * 3, VOICE_FLOOR);
+
+      // 소음 대비 3배 이상이면 말소리로 판단.
+      // 상한을 둬서 어떤 경우에도 기준이 말소리를 넘지 못하게 한다.
+      const threshold = Math.min(
+        Math.max(noiseFloor * 3, VOICE_FLOOR),
+        Math.max(dbg.peak * 0.25, VOICE_FLOOR)
+      );
       dbg.thr = threshold;
 
       if (rms > threshold) {
