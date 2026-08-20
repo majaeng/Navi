@@ -88,10 +88,9 @@
       height: calc(30px * 1.45 * 3);
       overflow: hidden;
       scroll-behavior: smooth;
-      -webkit-mask-image: linear-gradient(to bottom,
-        transparent 0, rgba(0,0,0,0.35) 12%, #000 34%, #000 100%);
-      mask-image: linear-gradient(to bottom,
-        transparent 0, rgba(0,0,0,0.35) 12%, #000 34%, #000 100%);
+      /* 위쪽을 살짝만 흐리게 — 과하면 글자가 잘린 것처럼 보인다 */
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 9%);
+      mask-image: linear-gradient(to bottom, transparent 0, #000 9%);
     }
 
     /* 번역 한국어 (주 정보) */
@@ -249,7 +248,8 @@
   // ── 긴 발화 분할 ──
   // 누적 전체를 매번 번역하면 길어질수록 느려져 타임아웃이 난다.
   // 끝난 문장만 떼어 번역하고 결과를 이어 붙인다.
-  let doneUpTo = 0;                // 어디까지 번역했는지
+  let doneText = '';               // 이미 번역한 원문 (위치 대신 텍스트로 추적)
+  const sentSegs = new Set();      // 이번 발화에서 이미 번역한 조각들
   let segments = [];               // 확정된 번역 조각들
   const SENT_END = /[。！？；…]/;    // 문장 끝 (가장 좋은 분할점)
   const CLAUSE_END = /[，、]/;      // 절 끝 (차선책)
@@ -496,7 +496,10 @@
     $trans.innerHTML = html || '';
     $trans.classList.remove('empty');
     requestAnimationFrame(() => {
-      $transWin.scrollTop = $transWin.scrollHeight;
+      // 줄 높이의 배수로 맞춰야 글자가 반쯤 잘리지 않는다
+      const lh = 30 * 1.45;
+      const max = $transWin.scrollHeight - $transWin.clientHeight;
+      $transWin.scrollTop = max > 0 ? Math.round(max / lh) * lh : 0;
     });
   }
 
@@ -946,17 +949,27 @@
 
     const isEnd = r.ls || data.status === 2;
 
-    // 새 발화가 시작되면(문장이 짧아짐) 기준 초기화
-    if (text.length < doneUpTo) { doneUpTo = 0; segments = []; }
-
-    // 아직 번역하지 않은 뒷부분
-    const pending = text.slice(doneUpTo);
+    // ── 어디까지 번역했는지 추적 ──
+    // iFlytek(wpgs)은 앞부분 인식 결과를 나중에 고쳐쓰기 때문에
+    // 위치(인덱스)로 추적하면 어긋나서 같은 구간을 또 번역하게 된다.
+    // 그래서 "이미 번역한 원문" 자체를 들고 접두사로 비교한다.
+    let pending;
+    if (doneText && text.startsWith(doneText)) {
+      pending = text.slice(doneText.length);
+    } else if (doneText && doneText.startsWith(text)) {
+      return;                       // 인식이 뒤로 물러남 — 무시
+    } else {
+      // 앞부분이 고쳐쓰였다 → 처음부터 다시 (중복 방지)
+      if (doneText) { doneText = ''; segments = []; sentSegs.clear(); }
+      pending = text;
+    }
 
     if (isEnd) {
       // 남은 부분을 마무리 번역
-      if (pending.trim().length > 1) translateSegment(pending, true);
+      if (pending.trim().length > 1) commitSegment(pending);
       flySlices = [];
-      doneUpTo = 0;
+      doneText = '';
+      sentSegs.clear();
       return;
     }
 
@@ -975,19 +988,26 @@
     }
 
     if (cut > 0) {
-      const seg = pending.slice(0, cut);
-      doneUpTo += cut;
-      translateSegment(seg, true);
+      commitSegment(pending.slice(0, cut));
     } else if (pending.length >= MAX_SEG) {
       // 부호가 전혀 없이 너무 길면 어쩔 수 없이 자름
-      const seg = pending.slice(0, MAX_SEG);
-      doneUpTo += MAX_SEG;
-      translateSegment(seg, true);
+      commitSegment(pending.slice(0, MAX_SEG));
     } else if (pending.length - lastSentLen >= GROW_CHARS) {
-      // 짧은 조각은 미리보기로만 (커서는 전진시키지 않음)
+      // 짧은 조각은 미리보기로만 (확정하지 않음)
       lastSentLen = pending.length;
-      translateSegment(pending, false);
+      translate(pending.trim(), false, true);
     }
+  }
+
+  // 조각을 확정 처리 — 같은 구간을 두 번 번역하지 않는다
+  function commitSegment(seg) {
+    const t = seg.trim();
+    if (!t) return;
+    if (sentSegs.has(t)) { doneText += seg; return; }   // 이미 번역함
+    sentSegs.add(t);
+    doneText += seg;
+    lastSentLen = 0;
+    translate(t, true, true);
   }
 
   // 마지막 구두점 위치 찾기 (그 다음 인덱스 반환)
@@ -999,13 +1019,6 @@
     return idx >= 0 ? idx + 1 : 0;
   }
 
-  // 조각 번역 — 확정 조각은 누적해서 이어 붙인다
-  async function translateSegment(seg, isFinal) {
-    const t = seg.trim();
-    if (!t) return;
-    if (isFinal) lastSentLen = 0;
-    await translate(t, isFinal, true);
-  }
 
   function stopFlytek() {
     isListening = false;
@@ -1394,7 +1407,7 @@
       $trans.classList.add('empty');
       $prev.textContent = '';
       lastTranslated = '';
-      segments = []; doneUpTo = 0; lastSentLen = 0;
+      segments = []; doneText = ''; lastSentLen = 0; sentSegs.clear();
       hideCurrency();
       $terms.classList.remove('show');
       e.preventDefault();
