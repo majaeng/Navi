@@ -96,6 +96,14 @@
     /* 아직 말하는 중 — 확정 전 */
     .translated-text.interim { color: rgba(255,255,255,0.62); }
 
+    /* 용어 힌트 (업계 용어 감지 시) */
+    .terms {
+      font-size: 15px; color: rgba(125,200,255,0.55);
+      margin-top: 14px; letter-spacing: 0.1px;
+      display: none;
+    }
+    .terms.show { display: block; }
+
     /* 원문 중국어 (아래, 참고용) */
     .original-text {
       font-size: 17px; color: var(--ink-2);
@@ -153,6 +161,7 @@
   <div class="stage">
     <div class="prev-text" id="prev-text"></div>
     <div class="translated-text empty" id="translated-text">중국어를 말하면 번역됩니다</div>
+    <div class="terms" id="terms"></div>
     <div class="original-text" id="original-text"></div>
   </div>
 
@@ -166,6 +175,8 @@
   <div class="toast" id="toast"></div>
 </div>
 
+<!-- 용어 사전 (별도 파일 — 여기만 수정하면 됨) -->
+<script src="glossary.js"></script>
 <script>
   const PAPAGO_PROXY = 'https://papago-proxy.majaeng.workers.dev';
   const ER_API = 'https://open.er-api.com/v6/latest/CNY';
@@ -431,9 +442,43 @@
     return t2;
   }
 
+  // ── 용어 사전 ──
+  const FIXES = window.GLOSSARY_FIXES || {};
+  const TERMS = window.GLOSSARY_TERMS || {};
+  // 긴 용어부터 매칭 (짧은 게 먼저 걸리는 것 방지)
+  const TERM_KEYS = Object.keys(TERMS).sort((a, b) => b.length - a.length);
+  const $terms = document.getElementById('terms');
+
+  // 잘못 인식된 표기를 올바른 한자로 교정
+  function applyFixes(text) {
+    let out = text;
+    for (const [wrong, right] of Object.entries(FIXES)) {
+      if (out.includes(wrong)) out = out.split(wrong).join(right);
+    }
+    return out;
+  }
+
+  // 원문에 업계 용어가 있으면 화면에 힌트 표시 (최대 2개)
+  function showTerms(text) {
+    const hits = [];
+    for (const k of TERM_KEYS) {
+      if (text.includes(k)) {
+        hits.push(`${k} · ${TERMS[k]}`);
+        if (hits.length >= 2) break;
+      }
+    }
+    if (hits.length) {
+      $terms.textContent = hits.join('   ');
+      $terms.classList.add('show');
+    } else {
+      $terms.classList.remove('show');
+    }
+  }
+
   async function translate(text, isFinal) {
-    text = text.trim();
+    text = applyFixes(text.trim());
     if (!text) return;
+    showTerms(text);
 
     // 캐시 적중 → 네트워크 없이 즉시
     const hit = transCache.get(text);
@@ -1143,6 +1188,7 @@
       $prev.textContent = '';
       lastTranslated = '';
       hideCurrency();
+      $terms.classList.remove('show');
       e.preventDefault();
     }
   });
