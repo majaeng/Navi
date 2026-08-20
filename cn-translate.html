@@ -486,28 +486,49 @@
   let revealQueue = [];      // 아직 드러내지 않은 글자들
   let shownText = '';        // 현재 화면에 드러난 글자
   let revealTimer = null;
+  let revealLast = 0;        // 마지막 틱 시각 (시간 기준 계산용)
 
   function enqueueReveal(text) {
     revealQueue.push(text);
-    if (!revealTimer) revealTimer = setInterval(revealTick, REVEAL_MS);
+    if (!revealTimer) {
+      revealLast = performance.now();
+      revealTimer = setInterval(revealTick, REVEAL_MS);
+    }
   }
 
+  // 틱 횟수가 아니라 "흐른 시간"으로 글자 수를 정한다.
+  // 브라우저가 타이머를 늦추더라도(백그라운드 등) 속도가 유지된다.
   function revealTick() {
     if (!revealQueue.length) {
       clearInterval(revealTimer); revealTimer = null;
       return;
     }
-    // 평소엔 한 글자씩. 밀리면 빨리 따라잡는다 (말이 빠를 때 뒤처지지 않게)
+    const now = performance.now();
+    const elapsed = now - revealLast;
+    revealLast = now;
+
+    // 밀리면 빨리 따라잡는다 (말이 빠를 때 뒤처지지 않게)
     const backlog = revealQueue.join(' ').length;
-    const step = backlog > 80 ? 4 : backlog > 40 ? 2 : 1;
+    const perChar = backlog > 80 ? REVEAL_MS / 4
+                  : backlog > 40 ? REVEAL_MS / 2
+                  : REVEAL_MS;
+    let take = Math.max(1, Math.min(30, Math.round(elapsed / perChar)));
 
-    let head = revealQueue[0];
-    const take = head.slice(0, step);
-    head = head.slice(step);
-    if (head) revealQueue[0] = head;
-    else { revealQueue.shift(); if (revealQueue.length) revealQueue[0] = ' ' + revealQueue[0]; }
+    let added = '';
+    while (take > 0 && revealQueue.length) {
+      const head = revealQueue[0];
+      const n = Math.min(take, head.length);
+      added += head.slice(0, n);
+      take -= n;
+      const rest = head.slice(n);
+      if (rest) revealQueue[0] = rest;
+      else {
+        revealQueue.shift();
+        if (revealQueue.length) revealQueue[0] = ' ' + revealQueue[0];
+      }
+    }
 
-    shownText += take;
+    shownText += added;
     paint();
   }
 
