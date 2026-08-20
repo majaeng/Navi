@@ -86,6 +86,8 @@
       color: var(--ink-3); font-weight: 400; font-size: 19px;
       letter-spacing: 0;
     }
+    /* 아직 말하는 중 — 확정 전 */
+    .translated-text.interim { color: rgba(255,255,255,0.62); }
 
     /* 원문 중국어 (아래, 참고용) */
     .original-text {
@@ -205,7 +207,11 @@
   let lastOriginal = '';
   let lastTranslated = '';
   let lastSent = '';               // 같은 문장 중복 번역 방지
+  let lastSentLen = 0;             // 직전 번역 시점의 글자 수
+  let transInFlight = false;       // 번역 요청 진행 중
   let transSeq = 0;                // 번역 응답 순서 보장
+  const MIN_CHARS = 4;             // 번역 시작 최소 길이
+  const GROW_CHARS = 4;            // 이만큼 늘어야 다시 번역
   let papagoFails = 0;             // 파파고 연속 실패 횟수
   let cnyToKrw = null; // 환율 캐시
 
@@ -359,6 +365,8 @@
     lastTranslated = translated;
     $trans.textContent = translated;
     $trans.classList.remove('empty');
+    // 중간 번역은 흐리게, 확정되면 선명하게 — 아직 듣는 중임을 시각적으로 전달
+    $trans.classList.toggle('interim', !isFinal);
   }
 
   // ── 번역 엔진 (파파고 우선 → iFlytek 폴백) ──
@@ -430,6 +438,7 @@
     }
 
     const seq = ++transSeq;
+    transInFlight = true;
     setStatus('translating', '번역 중...');
     try {
       const translated = await translateVia(text);
@@ -455,6 +464,8 @@
       }
     } catch(e) {
       showToast('번역 오류 - 네트워크 확인');
+    } finally {
+      transInFlight = false;
     }
     if (isListening) setStatus('listening', '듣는 중...');
   }
@@ -711,23 +722,26 @@
     dbg.lastText = text;
     $orig.textContent = text;
 
-    // 문장이 끝났으면 즉시 번역
+    // 문장이 끝났으면 즉시 번역 (확정)
     if (r.ls || data.status === 2) {
-      clearTimeout(flyPending);
       if (text.length > 1 && text !== lastSent) { lastSent = text; translate(text, true); }
       flySlices = [];
+      lastSentLen = 0;
       return;
     }
 
-    // 아직 말하는 중일 때의 미리보기 번역.
-    // 조각을 성급히 번역하면 오역이 심하므로 조건을 엄격히 둠:
-    //  · 8자 이상 (문맥이 생길 만큼 쌓였을 때)
-    //  · 0.8초간 인식 결과가 더 늘지 않을 때
-    clearTimeout(flyPending);
-    flyPending = setTimeout(() => {
-      const t = flySlices.join('').trim();
-      if (t.length >= 8 && t !== lastSent) { lastSent = t; translate(t); }
-    }, 800);
+    // ── 말하는 중 즉시 번역 ──
+    // 대기 없이 바로 번역하되, 깜빡임과 호출 폭증을 막기 위해
+    //  · 최소 길이(4자) 이상이고
+    //  · 직전 번역 이후 4자 이상 늘었을 때만
+    //  · 이전 요청이 처리 중이면 건너뜀
+    if (text.length < MIN_CHARS) return;
+    if (text.length - lastSentLen < GROW_CHARS) return;
+    if (transInFlight) return;
+
+    lastSent = text;
+    lastSentLen = text.length;
+    translate(text, false);
   }
 
   function stopFlytek() {
