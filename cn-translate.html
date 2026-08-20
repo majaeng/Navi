@@ -884,7 +884,14 @@
     } catch(e) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
-    audioCtx.resume?.();            // 자동재생 정책으로 suspended 상태일 수 있음
+    // 자동재생 정책으로 suspended 상태일 수 있으므로 깨움
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {});
+      // 사용자 동작이 있을 때 다시 시도하도록 예약
+      const wake = () => { audioCtx?.resume().catch(() => {}); };
+      document.addEventListener('keydown', wake, { once: true });
+      document.addEventListener('click', wake, { once: true });
+    }
 
     const actualRate = audioCtx.sampleRate;
     const needResample = Math.abs(actualRate - SAMPLE_RATE) > 1;
@@ -1047,6 +1054,47 @@
         // 이미 실행 중
       }
     }
+  }
+
+  // ══════════════════════════════════════════
+  //  자동 시작
+  //  마이크 권한이 이미 허용돼 있으면 앱을 열자마자 듣기 시작.
+  //  (첫 방문 등 권한이 없을 때만 Enter를 한 번 눌러야 함)
+  // ══════════════════════════════════════════
+  async function autoStart() {
+    // 권한 상태 확인이 가능한 브라우저면 미리 확인
+    try {
+      const st = await navigator.permissions?.query({ name: 'microphone' });
+      if (st && st.state === 'denied') {
+        setStatus('', '마이크 권한 필요');
+        return;
+      }
+      if (st && st.state === 'prompt') {
+        setStatus('', 'Enter로 시작');   // 권한 요청은 사용자 동작이 필요
+        return;
+      }
+    } catch(e) {
+      // permissions API 미지원 → 그냥 시도해봄
+    }
+
+    try {
+      await toggleListen();
+    } catch(e) {
+      setStatus('', 'Enter로 시작');
+    }
+  }
+
+  // 화면이 다시 활성화되면(안경에서 앱으로 복귀) 자동으로 재개
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && !isListening) {
+      setTimeout(autoStart, 300);
+    }
+  });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => setTimeout(autoStart, 100));
+  } else {
+    setTimeout(autoStart, 100);
   }
 
   // ── 뉴럴밴드 (키보드) ──
