@@ -239,7 +239,7 @@
   let papagoFails = 0;             // 파파고 연속 실패 횟수
   let papagoBlockedAt = 0;         // 파파고를 건너뛰기 시작한 시각
   let flytekMtBroken = false;      // iFlytek 번역 사용 불가 (미구독 등)
-  const PAPAGO_RETRY_MS = 20000;   // 20초 뒤에는 반드시 재시도
+  const PAPAGO_BACKOFF_MS = 4000;  // 이 시간 동안만 보조 엔진을 먼저 시도
   let cnyToKrw = null; // 환율 캐시
 
   // ── 환율 로드 (앱 시작시 1회) ──
@@ -473,7 +473,7 @@
 
   // ── 번역 엔진 (파파고 우선 → iFlytek 폴백) ──
   // 파파고가 느리거나 막히면(중국 등) 자동으로 iFlytek으로 넘어감
-  const PAPAGO_TIMEOUT = 2500;
+  const PAPAGO_TIMEOUT = 1800;   // 보통 0.3초면 오므로 넉넉한 편
 
   async function papagoTranslate(text) {
     const ctl = new AbortController();
@@ -503,41 +503,41 @@
     return data?.translated || '';
   }
 
-  async function translateVia(text) {
-    // 파파고를 건너뛸지 판단. 단, 일정 시간이 지나면 반드시 다시 시도한다
-    // (한 번 실패했다고 영영 포기하면 번역이 완전히 멈춰버림)
-    const skipPapago = papagoFails >= 3 && (Date.now() - papagoBlockedAt) < PAPAGO_RETRY_MS;
-
-    if (!skipPapago) {
-      if (papagoFails >= 3) papagoFails = 2;   // 재시도 기회 부여
-      try {
-        const t = await papagoTranslate(text);
-        if (t) { papagoFails = 0; return t; }
-        papagoFails++;
-      } catch(e) {
-        papagoFails++;
-      }
-      if (papagoFails >= 3) papagoBlockedAt = Date.now();
-    }
-
-    // 보조 엔진 (iFlytek 번역) — 구독 안 돼 있으면 빈 값이 온다
-    if (!flytekMtBroken) {
-      try {
-        const t2 = await flytekTranslate(text);
-        if (t2) return t2;
-        flytekMtBroken = true;    // 한 번 실패하면 더 호출하지 않음
-      } catch(e) {
-        flytekMtBroken = true;
-      }
-    }
-
-    // 보조 엔진도 못 쓰면 파파고를 한 번 더 시도 (마지막 수단)
+  // 파파고는 절대 영구히 건너뛰지 않는다. 매번 시도한다.
+  // 다만 최근에 연속 실패했고 보조 엔진이 살아있다면 순서만 바꿔
+  // 대기 시간을 아낀다.
+  async function tryFlytek(text) {
+    if (flytekMtBroken) return '';
     try {
-      const t3 = await papagoTranslate(text);
-      if (t3) { papagoFails = 0; return t3; }
+      const t = await flytekTranslate(text);
+      if (t) return t;
     } catch(e) {}
-
+    flytekMtBroken = true;   // 미구독 등 — 더는 호출하지 않음
     return '';
+  }
+
+  async function translateVia(text) {
+    const papagoShaky = papagoFails >= 3 &&
+                        (Date.now() - papagoBlockedAt) < PAPAGO_BACKOFF_MS;
+
+    // 파파고가 불안정하면 보조 엔진 먼저
+    if (papagoShaky && !flytekMtBroken) {
+      const t = await tryFlytek(text);
+      if (t) return t;
+    }
+
+    // 파파고 시도 (항상)
+    try {
+      const t = await papagoTranslate(text);
+      if (t) { papagoFails = 0; return t; }
+      papagoFails++;
+    } catch(e) {
+      papagoFails++;
+    }
+    if (papagoFails === 3) papagoBlockedAt = Date.now();
+
+    // 아직 안 써봤다면 보조 엔진
+    return await tryFlytek(text);
   }
 
   // ── 용어 사전 ──
