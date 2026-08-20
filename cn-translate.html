@@ -205,7 +205,9 @@
   let peakTracker = 0;               // 최근 최대 진폭
   const TARGET_PEAK = 0.35;          // 증폭 목표 레벨
   const MAX_GAIN = 12;               // 최대 증폭 배율 (높이면 잡음까지 커져 인식 방해)
-  const PREROLL_CHUNKS = 3;          // 약 0.7초 분량 보관
+  // 세션 재연결에 2~3초가 걸리므로 그동안의 음성을 모두 보관해야
+  // 단어가 잘리지 않는다 (한 청크 ≈ 0.26초)
+  const PREROLL_CHUNKS = 20;         // 약 5초 분량 보관
   let flyReopen = null;            // 세션 재연결 타이머
   let flyRotate = null;            // 60초 만료 전 교대 타이머
   let flyAppId = '';
@@ -245,8 +247,10 @@
   // 값이 작을수록 빠르고, 클수록 문맥이 살아난다.
   const FIRST_SEG = 8;             // 첫 조각은 짧게 끊어 빨리 띄움
   const SOFT_SEG = 12;             // 이후에는 절(쉼표) 단위로
-  const MAX_SEG = 28;              // 쉼표가 없어도 이 길이면 끊는다
-                                   // (없으면 긴 문장에서 한참 아무것도 안 뜸)
+  // 강제 절단은 단어 한복판을 자를 수 있어 오역을 만든다
+  // (手机卡 → 手机 로 잘려 "차량등록증" 같은 번역이 나옴).
+  // 최후의 수단으로만 쓰도록 넉넉히 잡는다.
+  const MAX_SEG = 70;
   const MAX_SEGMENTS = 12;         // 화면에 유지할 조각 수
   const REVEAL_MS = 50;            // 글자가 드러나는 간격 (작을수록 빠름)
   let voiceAt = 0;                 // 말이 시작된 시각 (지연 측정용)
@@ -915,6 +919,14 @@
         flyCarry = new Uint8Array(0);
         clearTimeout(flyRotate);
         setTimeout(() => { try { sock.close(1000); } catch {} }, 100);
+        // 말이 계속되고 있으면 곧바로 다음 세션을 연다.
+        // 목소리가 감지될 때까지 기다리면 그 사이 음성이 유실된다.
+        if (isListening && sttMode === 'iflytek' && !flyOpening) {
+          flyOpening = true;
+          voiceAt = performance.now();
+          dbg.session = '연결중';
+          openFlySession(false);
+        }
       }
     };
 
@@ -984,8 +996,10 @@
         domain: 'iat',        // Short Form ASR
         accent: 'mandarin',   // 쓰촨 등 방언도 이 엔진이 흡수함
         dwa: 'wpgs',          // 스트리밍 중간결과 활성화
-        vad_eos: 900,         // 0.9초 침묵 = 발화 종료
-                              // 너무 짧으면 문장이 조각나서 번역 품질이 떨어짐
+        vad_eos: 3000,        // 3초 침묵 = 발화 종료.
+                              // 짧으면 세션이 자주 끊기고, 재연결 사이에
+                              // 음성이 유실돼 단어가 잘린다.
+                              // 화면 갱신은 조각 단위로 하므로 길어도 무방.
         ptt: 1,               // 구두점
       };
       flyFirstFrame = false;
