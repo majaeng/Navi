@@ -39,6 +39,13 @@
     .status {
       position: absolute; top: var(--safe); left: var(--safe);
       display: flex; align-items: center; gap: 9px;
+      cursor: pointer;                     /* 브라우저 테스트용 */
+      padding: 6px 10px; margin: -6px -10px;  /* 클릭 영역만 넓힘 */
+    }
+    /* 조작 힌트 — 아주 낮은 대비로 상시 표시 */
+    .status-key {
+      font-size: 13px; color: var(--ink-3);
+      letter-spacing: 0.2px;
     }
     .status-dot {
       width: 7px; height: 7px; border-radius: 50%;
@@ -131,10 +138,11 @@
 <body>
 <div id="app">
 
-  <!-- 상태 (좌상단) -->
-  <div class="status">
+  <!-- 상태 (좌상단) · 클릭하면 시작·정지 -->
+  <div class="status" id="status" onclick="toggleListen()">
     <div class="status-dot" id="status-dot"></div>
-    <span class="status-text" id="status-text">Enter로 시작</span>
+    <span class="status-text" id="status-text">준비</span>
+    <span class="status-key" id="status-key">· Enter 시작</span>
   </div>
 
   <!-- 엔진 (우상단) -->
@@ -272,6 +280,7 @@
   // ── UI 참조 ──
   const $dot    = document.getElementById('status-dot');
   const $status = document.getElementById('status-text');
+  const $key    = document.getElementById('status-key');
   const $orig   = document.getElementById('original-text');
   const $trans  = document.getElementById('translated-text');
   const $prev   = document.getElementById('prev-text');
@@ -284,6 +293,8 @@
   function setStatus(state, text) {
     $dot.className = 'status-dot' + (state ? ' ' + state : '');
     $status.textContent = text;
+    // 지금 무엇을 할 수 있는지 항상 표시
+    if ($key) $key.textContent = isListening ? '· Enter 정지' : '· Enter 시작';
   }
 
   // ── 진단 패널 ──
@@ -527,7 +538,7 @@
       } else {
         $btn.classList.remove('active');
         $btn.textContent = '🎤';
-        setStatus('', 'Enter로 시작');
+        setStatus('', '준비');
       }
     };
 
@@ -763,7 +774,7 @@
     flySlices = [];
     $btn.classList.remove('active');
     $btn.textContent = '🎤';
-    setStatus('', 'Enter로 시작');
+    setStatus('', '준비');
   }
 
   // ══════════════════════════════════════════
@@ -871,7 +882,7 @@
       dbg.mic = '권한거부';
       dbg.lastErr = '마이크 접근 실패: ' + e.name;
       showToast('마이크 권한을 허용해주세요');
-      setStatus('', 'Enter로 시작');
+      setStatus('', '준비');
       return false;
     }
   }
@@ -1027,7 +1038,7 @@
 
     $btn.classList.remove('active');
     $btn.textContent = '🎤';
-    setStatus('', 'Enter로 시작');
+    setStatus('', '준비');
   }
 
   // ── 엔진 표시 갱신 ──
@@ -1084,7 +1095,7 @@
         return;
       }
       if (st && st.state === 'prompt') {
-        setStatus('', 'Enter로 시작');   // 권한 요청은 사용자 동작이 필요
+        setStatus('', '준비');   // 권한 요청은 사용자 동작이 필요
         return;
       }
     } catch(e) {
@@ -1094,7 +1105,7 @@
     try {
       await toggleListen();
     } catch(e) {
-      setStatus('', 'Enter로 시작');
+      setStatus('', '준비');
     }
   }
 
