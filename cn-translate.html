@@ -236,8 +236,8 @@
   const CLAUSE_END = /[，、]/;      // 절 끝 (차선책)
   // 절 단위(쉼표)로 자르면 뜻이 온전하면서도 빨리 나온다.
   // 값이 작을수록 빠르고, 클수록 문맥이 살아난다.
-  // 미리보기를 없앴으므로 조각을 조금 더 자주 내보내 공백을 줄인다
-  const SOFT_SEG = 22;             // 이보다 길어지면 절 단위로도 자름
+  const FIRST_SEG = 8;             // 첫 조각은 짧게 끊어 빨리 띄움
+  const SOFT_SEG = 18;             // 이후에는 절 단위로 여유 있게
   const MAX_SEG = 120;             // 부호가 아예 없을 때의 한계
   const MAX_SEGMENTS = 12;         // 화면에 유지할 조각 수
   let papagoFails = 0;             // 파파고 연속 실패 횟수
@@ -630,10 +630,9 @@
       return;
     }
 
-    // 정확히 일치하는 게 없으면, 비슷한 문장을 흐리게 먼저 보여줌.
-    // (아래에서 진짜 번역이 도착하면 바로 교체됨)
-    const guess = findSimilar(key);
-    if (guess) showTranslation(guess, false, isSegment);
+    // ※ 유사 문장 미리보기는 쓰지 않는다.
+    //   비슷한 번역을 먼저 띄웠다가 진짜 번역으로 바꾸면
+    //   글자가 한 번 더 바뀌어서 읽기가 힘들어진다.
 
     const seq = ++transSeq;
     transInFlight = true;
@@ -964,8 +963,10 @@
     // 1순위: 문장이 끝났으면 거기서 자름
     let cut = lastBoundary(pending, SENT_END);
 
-    // 2순위: 문장이 안 끝났는데 길어지면 절(쉼표) 단위로
-    if (cut === 0 && pending.length >= SOFT_SEG) {
+    // 2순위: 문장이 안 끝났는데 길어지면 절(쉼표) 단위로.
+    // 첫 조각은 기다림이 길게 느껴지므로 더 짧게 끊어 빨리 띄운다.
+    const soft = segments.length === 0 ? FIRST_SEG : SOFT_SEG;
+    if (cut === 0 && pending.length >= soft) {
       cut = lastBoundary(pending, CLAUSE_END);
     }
 
