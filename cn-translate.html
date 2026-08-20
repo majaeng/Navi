@@ -343,8 +343,26 @@
   const CACHE_MAX = 5000;          // 보관 문장 수
   let cacheDirty = false;
 
+  // ── 캐시 조회용 정규화 ──
+  // 같은 말인데 문장부호나 말끝 어조사만 다른 경우를 같은 것으로 취급.
+  // 예) "好的。" "好的吧" "嗯，好的" → 모두 "好的"
+  // ※ 뜻이 바뀌는 어조사(吗/呢)는 건드리지 않음
+  const FILLER_HEAD = /^(嗯|啊|呃|哦|噢|那个|就是说|就是|然后)+/;
+  const FILLER_TAIL = /(吧|啊|呀|嘛|哦|噢|了啊)+$/;
+  const PUNCT = /[。，、！？；：""''《》()（）\s.,!?;:]/g;
+
+  function normalize(text) {
+    let t = text.replace(PUNCT, '');
+    t = t.replace(FILLER_HEAD, '');
+    // 어조사는 한 번만 떼어냄 (과하게 깎으면 뜻이 달라짐)
+    if (t.length > 2) t = t.replace(FILLER_TAIL, '');
+    return t || text;
+  }
+
   // 미리 외워둔 문장 (glossary.js) — 서버를 안 거치므로 지연 0
-  const seedPhrases = Object.entries(window.GLOSSARY_PHRASES || {});
+  // 정규화한 형태로 저장해 변형에도 걸리게 함
+  const seedPhrases = Object.entries(window.GLOSSARY_PHRASES || {})
+    .map(([k, v]) => [normalize(k), v]);
 
   // 저장된 캐시 불러오기 (기본 표현 + 그동안 쌓인 것)
   const seedKeys = new Set(seedPhrases.map(([k]) => k));
@@ -474,12 +492,13 @@
     if (!text) return;
     showTerms(text);
 
-    // 캐시 적중 → 네트워크 없이 즉시
-    const hit = transCache.get(text);
+    // 캐시 적중 → 네트워크 없이 즉시 (문장부호·어조사 차이는 무시)
+    const key = normalize(text);
+    const hit = transCache.get(key);
     if (hit) {
       // 자주 쓰는 문장이 오래됐다고 밀려나지 않도록 최신으로 갱신
-      if (!seedKeys.has(text)) {
-        transCache.delete(text); transCache.set(text, hit); cacheDirty = true;
+      if (!seedKeys.has(key)) {
+        transCache.delete(key); transCache.set(key, hit); cacheDirty = true;
       }
       showTranslation(hit, isFinal);
       const amount = detectAmount(text);
@@ -499,7 +518,7 @@
         showTranslation(translated, isFinal);
 
         // 캐시에 저장 (다음에 같은 말이 나오면 즉시 표시)
-        transCache.set(text, translated);
+        transCache.set(normalize(text), translated);
         cacheDirty = true;
         // 넘치면 기본 표현은 남기고 오래된 것부터 정리
         while (transCache.size > CACHE_MAX) {
