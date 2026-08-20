@@ -876,6 +876,16 @@
       if (background) terminateFlySocket(flySocket);   // 이전 세션 마무리
       flySocket = sock;
       flyFirstFrame = true;
+
+      // ★ 새 세션은 인식 결과가 0번부터 다시 시작한다.
+      //   이전 조각을 지우지 않으면 앞부분만 덮이고 뒷부분은 옛것이 남아
+      //   원문이 뒤엉킨다(번역 반복·오역의 원인).
+      flySlices = [];
+      doneText = '';
+      sentSegs.clear();
+      lastSentLen = 0;
+      utteranceEnded = true;      // 새 세션 = 새 발화로 취급
+
       dbg.session = '열림'; dbg.frames = 0; dbg.recv = 0; dbg.lastErr = '-';
       setStatus('listening', '듣는 중...');
       scheduleFlyRotate();
@@ -994,6 +1004,16 @@
     let piece = '';
     for (const w of (r.ws || [])) {
       for (const c of (w.cw || [])) piece += c.w;
+    }
+
+    // 순번이 되돌아갔다 = 새 세션이 시작된 것.
+    // 이전 조각이 남아 있으면 원문이 뒤엉키므로 비운다.
+    if (r.sn <= 1 && flySlices.length > 3) {
+      flySlices = [];
+      doneText = '';
+      sentSegs.clear();
+      lastSentLen = 0;
+      utteranceEnded = true;
     }
 
     if (r.pgs === 'rpl' && Array.isArray(r.rg)) {
