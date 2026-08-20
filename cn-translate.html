@@ -1117,19 +1117,9 @@
     if (inFlight >= MAX_PARALLEL) return;
     if (pending.length < MIN_CHARS) return;
 
-    // ── 말이 멈춘 지점에서 끊기 ──
-    // 중간 인식 결과에는 구두점이 없다(구두점은 문장이 끝나야 붙는다).
-    // 대신 인식 결과가 갱신되지 않고 비어 있던 시간 = 말이 멈춘 순간이므로
-    // 그 자리를 절 경계로 삼는다.
-    const now = performance.now();
-    const gap = lastResultAt ? now - lastResultAt : 0;
-    lastResultAt = now;
-
-    if (gap > PAUSE_MS && prevTextLen > doneText.length + MIN_CHARS) {
-      const seg = text.slice(doneText.length, prevTextLen);
-      if (seg) { commitSegment(seg); prevTextLen = text.length; return; }
-    }
-    prevTextLen = text.length;
+    // ※ "말이 멈추면 자른다"는 방식은 쓰지 않는다.
+    //   멈춘 시점이 단어 한복판일 수 있어 需求 → 需 / 求 처럼 쪼개진다.
+    //   분할은 아래 구 단위 규칙(chunkCut)이 전담한다.
 
     // 1순위: 문장이 끝났으면 거기서 자름
     let cut = lastBoundary(pending, SENT_END);
@@ -1259,6 +1249,7 @@
   const CHUNK = 13;        // 목표 조각 길이
   const CHUNK_WIN = 7;     // 이 범위 안에서 좋은 자리를 찾는다
   const TAIL_MIN = 6;      // 남는 꼬리가 이보다 짧으면 자르지 않고 기다린다
+  const HARD_MAX = 45;     // 구 표지가 전혀 없을 때만 이 길이에서 강제로 자름
 
   // 조각 끝에 오면 안 되는 말들.
   // 뒤에 올 내용을 받아야 뜻이 성립하므로, 여기서 끊으면 번역이 붕 뜬다.
@@ -1289,11 +1280,16 @@
       if (!endsDangling(t.slice(0, i))) return i;
     }
 
-    // 마땅한 자리가 없으면 기본 길이에서 자르되, 역시 어중간하면 조금 밀어본다
-    for (let i = CHUNK; i <= hi; i++) {
-      if (!endsDangling(t.slice(0, i))) return i;
+    // ★ 마땅한 자리가 없으면 자르지 않고 기다린다.
+    //   억지로 자르면 客户 → 客 / 户 처럼 단어가 쪼개져 오역이 된다.
+    //   너무 길어지면 그때만 어쩔 수 없이 자른다.
+    if (t.length >= HARD_MAX) {
+      for (let i = HARD_MAX; i > CHUNK; i--) {
+        if (!endsDangling(t.slice(0, i))) return i;
+      }
+      return HARD_MAX;
     }
-    return 0;   // 지금은 자르지 않고 더 기다린다
+    return 0;
   }
 
   // 마지막 구두점 위치 찾기 (그 다음 인덱스 반환)
