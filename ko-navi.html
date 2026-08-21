@@ -647,8 +647,10 @@
     searchTimer = setTimeout(() => doSearch(q), 500);
   });
 
-  // ── GCJ-02 → WGS-84 좌표 변환 (텐센트 결과 → GPS 좌표) ──
-  function gcj02ToWgs84(lat, lng) {
+  // ── 중국 좌표계 변환 ──
+  //  중국은 GPS 좌표(WGS-84)를 그대로 쓰지 않고 의도적으로 틀어놓은
+  //  GCJ-02를 쓴다. 변환하지 않으면 300~500m 어긋난다.
+  function gcjDelta(lat, lng) {
     const a = 6378245.0, ee = 0.00669342162296594323;
     function tLat(x, y) {
       let r = -100+2*x+3*y+0.2*y*y+0.1*x*y+0.2*Math.sqrt(Math.abs(x));
@@ -670,13 +672,21 @@
     const sq = Math.sqrt(magic);
     const dLat = (tLat(lng-105, lat-35)*180) / ((a*(1-ee))/(magic*sq)*Math.PI);
     const dLng = (tLng(lng-105, lat-35)*180) / (a/sq*Math.cos(radlat)*Math.PI);
-    return { lat: lat - dLat, lng: lng - dLng };
+    return { dLat, dLng };
+  }
+  function gcj02ToWgs84(lat, lng) {   // 텐센트 결과 → GPS 좌표
+    const d = gcjDelta(lat, lng);
+    return { lat: lat - d.dLat, lng: lng - d.dLng };
+  }
+  function wgs84ToGcj02(lat, lng) {   // GPS 좌표 → 텐센트 요청용
+    const d = gcjDelta(lat, lng);
+    return { lat: lat + d.dLat, lng: lng + d.dLng };
   }
 
   // ── JSONP 헬퍼 (텐센트 API CORS 우회) ──
   function jsonp(url) {
     return new Promise((resolve, reject) => {
-      const cb = '_tmap_' + Date.now();
+      const cb = '_tmap_' + (jsonp.n = (jsonp.n || 0) + 1) + '_' + Date.now();
       window[cb] = data => { delete window[cb]; document.head.removeChild(s); resolve(data); };
       const s = document.createElement('script');
       s.src = url + `&output=jsonp&callback=${cb}`;
@@ -793,7 +803,7 @@
     pitchTarget = 0;
     setTimeout(() => { pitchTarget = 1; }, 900);
 
-    fetchOSRMRoute(currentPos, dest).then(route => {
+    fetchRoute(currentPos, dest).then(route => {
       if (route) {
         routeCoords = route.geometry.coordinates.map(([lng, lat]) => ({ lat, lng }));
         routeSteps = route.legs[0].steps;
@@ -837,7 +847,87 @@
     mapView.zoom = 16; // 고정 줌 - 목적지가 멀어도 현재 주변만 표시
   }
 
-  // ── OSRM (사용자 선택 프로필) ──
+  // ══════════════════════════════════════════
+  //  텐센트 경로 안내 (중국 도로 데이터)
+  //  OSRM 공개 서버는 OpenStreetMap 기반이라 중국 도로가 부실하고
+  //  중국에서 접속도 불안정하다. 중국에서는 텐센트를 쓴다.
+  // ══════════════════════════════════════════
+
+  // 텐센트의 회전 설명(중국어) → OSRM 형식으로.
+  // ※ 순서 중요: '좌회전'보다 '좌전방'을 먼저 봐야 한다.
+  const TENCENT_ACT = [
+    [/掉头/,            'turn', 'uturn'],
+    [/左前方|靠左/,      'turn', 'slight left'],
+    [/右前方|靠右/,      'turn', 'slight right'],
+    [/左后方/,          'turn', 'sharp left'],
+    [/右后方/,          'turn', 'sharp right'],
+    [/左转|向左/,        'turn', 'left'],
+    [/右转|向右/,        'turn', 'right'],
+  ];
+
+  function fetchTencentRoute(from, dest) {
+    const mode = navProfile === 'driving' ? 'driving' : 'walking';
+    const f = wgs84ToGcj02(from.lat, from.lng);
+    const t = wgs84ToGcj02(dest.lat, dest.lng);
+    const url = `https://apis.map.qq.com/ws/direction/v1/${mode}/`
+              + `?from=${f.lat},${f.lng}&to=${t.lat},${t.lng}&key=${TENCENT_KEY}`;
+
+    return jsonp(url).then(d => {
+      if (d.status !== 0) throw new Error(d.message || '텐센트 경로 실패');
+      const r = d.result && d.result.routes && d.result.routes[0];
+      if (!r) throw new Error('경로 없음');
+
+      // 폴리라인은 차분 압축돼 온다 — 앞 값에 더해가며 복원
+      const pl = r.polyline.slice();
+      for (let i = 2; i < pl.length; i++) pl[i] = pl[i - 2] + pl[i] / 1000000;
+      const pts = [];
+      for (let i = 0; i + 1 < pl.length; i += 2) {
+        const w = gcj02ToWgs84(pl[i], pl[i + 1]);
+        pts.push([w.lng, w.lat]);          // OSRM과 같은 [경도, 위도] 순서
+      }
+      if (pts.length < 2) throw new Error('경로 좌표 부족');
+
+      const steps = (r.steps || []).map(st => {
+        const i0 = Array.isArray(st.polyline_idx) ? st.polyline_idx[0] : 0;
+        const loc = pts[Math.min(i0, pts.length - 1)];
+        const desc = (st.act_desc || '') + (st.dir_desc || '') + (st.instruction || '');
+        let type = 'turn', mod = 'straight';
+        for (const [re, ty, md] of TENCENT_ACT) {
+          if (re.test(desc)) { type = ty; mod = md; break; }
+        }
+        return {
+          distance: st.distance || 0,
+          duration: (st.duration || 0) * 60,   // 텐센트는 '분' 단위
+          name: st.road_name || '',
+          maneuver: { type, modifier: mod, location: loc },
+        };
+      });
+      steps.push({
+        distance: 0, duration: 0, name: '',
+        maneuver: { type: 'arrive', modifier: '', location: pts[pts.length - 1] },
+      });
+
+      return {
+        distance: r.distance,
+        duration: (r.duration || 0) * 60,     // 분 → 초
+        geometry: { coordinates: pts },
+        legs: [{ steps }],
+      };
+    });
+  }
+
+  // 나라에 따라 경로 엔진을 고른다. 텐센트가 실패하면 OSRM으로 넘어간다.
+  function fetchRoute(from, dest) {
+    if (currentCountry() === 'cn') {
+      return fetchTencentRoute(from, dest).catch(e => {
+        console.warn('텐센트 경로 실패, OSRM으로 대체:', e && e.message);
+        return fetchOSRMRoute(from, dest);
+      });
+    }
+    return fetchOSRMRoute(from, dest);
+  }
+
+  // ── OSRM (한국·그 외 / 텐센트 실패 시 대체) ──
   function fetchOSRMRoute(from, dest) {
     const url = `https://router.project-osrm.org/route/v1/${navProfile}/${from.lng},${from.lat};${dest.lng},${dest.lat}?overview=full&geometries=geojson&steps=true`;
     return fetch(url).then(r => r.json()).then(d => d.routes?.[0] || null);
@@ -1126,7 +1216,7 @@
         isRerouting = true;
         document.getElementById('turn-dist').textContent = '재경로...';
         speak('경로를 다시 탐색합니다');
-        fetchOSRMRoute(currentPos, dest).then(route => {
+        fetchRoute(currentPos, dest).then(route => {
           if (route) {
             routeCoords = route.geometry.coordinates.map(([lng, lat]) => ({ lat, lng }));
             routeSteps = route.legs[0].steps;
