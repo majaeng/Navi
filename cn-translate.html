@@ -21,7 +21,9 @@
        ══════════════════════════════════════════ */
 
     :root {
-      --safe: 54px;              /* 안전 영역 여백 (9%) */
+      /* 메타 공식 가이드라인: 안전 여백 8dp (전체화면 앱 24dp) */
+      --safe: 24px;
+      --fs: 24px;                /* 번역 글자 크기 — 상/하 스와이프로 조절 */
       --ink-1: #fff;             /* 주 정보 */
       --ink-2: rgba(255,255,255,0.40);
       --ink-3: rgba(255,255,255,0.22);
@@ -79,7 +81,7 @@
     .hidden-refs { display: none; }
 
     .trans-window {
-      height: calc(30px * 1.45 * 6);
+      height: calc(var(--fs) * 1.45 * 10);
       overflow: hidden;
       scroll-behavior: smooth;
       /* 위쪽을 살짝만 흐리게 — 과하면 글자가 잘린 것처럼 보인다 */
@@ -89,7 +91,7 @@
 
     /* 번역 한국어 (주 정보) */
     .translated-text {
-      font-size: 30px; font-weight: 600; color: var(--ink-1);
+      font-size: var(--fs); font-weight: 600; color: var(--ink-1);
       line-height: 1.45; word-break: keep-all;
       letter-spacing: -0.3px;
       transition: color 250ms;
@@ -232,7 +234,7 @@
   // 끝나면 확정해서 위로 올린다.
   let lines = [];            // 확정된 문장들 (더는 바뀌지 않음)
   let inFlight = 0;
-  const MAX_LINES = 8;       // 화면에 유지할 확정 문장 수
+  const MAX_LINES = 14;      // 화면에 유지할 확정 문장 수
   let liveSeq = 0;           // 미리보기 세대 번호
   let liveText = '';         // 말하는 중인 문장의 번역(흐린 줄)
   let lastCommitAt = 0;      // 마지막으로 화면에 올린 시각
@@ -1028,7 +1030,7 @@
     if (!hasAny) $trans.textContent = '중국어를 말하면 번역됩니다';
     $trans.classList.toggle('empty', !hasAny);
     requestAnimationFrame(() => {
-      const lh = 30 * 1.45;
+      const lh = curFontSize() * 1.45;
       const max = $transWin.scrollHeight - $transWin.clientHeight;
       $transWin.scrollTop = max > 0 ? Math.round(max / lh) * lh : 0;
     });
@@ -1465,8 +1467,31 @@
     setTimeout(autoStart, 100);
   }
 
+  // ── 글자 크기 (상/하 스와이프) ──
+  // 안경에서 실제로 보면서 조절할 수 있어야 한다. 밝은 곳에서는 크게,
+  // 정보가 많이 필요할 때는 작게. 고른 값은 기억해 둔다.
+  const FS_MIN = 18, FS_MAX = 32;
+  function curFontSize() {
+    return parseFloat(getComputedStyle(document.documentElement)
+      .getPropertyValue('--fs')) || 24;
+  }
+  function setFontSize(px) {
+    const v = Math.min(FS_MAX, Math.max(FS_MIN, Math.round(px)));
+    document.documentElement.style.setProperty('--fs', v + 'px');
+    try { localStorage.setItem('cn.fs', String(v)); } catch (e) {}
+    toast('글자 ' + v + 'px');
+    renderLines();
+  }
+  try {
+    const saved = parseFloat(localStorage.getItem('cn.fs'));
+    if (saved) document.documentElement.style.setProperty('--fs', saved + 'px');
+  } catch (e) {}
+
   // ── 뉴럴밴드 (키보드) ──
   document.addEventListener('keydown', e => {
+    // 위/아래 스와이프 = 글자 크기
+    if (e.key === 'ArrowUp')   { setFontSize(curFontSize() + 2); e.preventDefault(); return; }
+    if (e.key === 'ArrowDown') { setFontSize(curFontSize() - 2); e.preventDefault(); return; }
     if (e.key === 'Enter' || e.key === ' ') {
       toggleListen();
       e.preventDefault();
