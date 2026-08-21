@@ -279,6 +279,9 @@
 <script>
   const KAKAO_JS_KEY = '14b2d81032a1fb85494844643078aadc';
   const MAPBOX_TOKEN = 'pk.eyJ1IjoibWFqYWVuZyIsImEiOiJjbXNlNTk5eWwwNWgyMnhzOGUxdG5vM3RoIn0.AqqL86GG17pLS0MaSkN4ig';
+  // 국내 도보 경로 (SK TMAP)
+  const TMAP_KEY = 'XKa6vUNY752zXMhjUt3iA53CwCaXU8S73lMXAiZj';
+
   // 폰에서 보낸 목적지를 받아오는 릴레이
   const DEST_RELAY = 'https://dest-relay.majaeng.workers.dev';
 
@@ -919,7 +922,83 @@
     });
   }
 
-  // 나라에 따라 경로 엔진을 고른다. 텐센트가 실패하면 OSRM으로 넘어간다.
+  // ══════════════════════════════════════════
+  //  국내 도보 경로 (TMAP 보행자 경로안내)
+  //  OSRM은 오픈스트리트맵 기반이라 국내 보도 데이터가 부실하다.
+  //  TMAP은 횡단보도·육교·지하보도까지 반영된 실제 보행 경로를 준다.
+  // ══════════════════════════════════════════
+
+  // TMAP 회전 코드 → OSRM 형식
+  const TMAP_TURN = {
+    11: ['turn', 'straight'],  12: ['turn', 'left'],        13: ['turn', 'right'],
+    14: ['turn', 'uturn'],     16: ['turn', 'sharp left'],  17: ['turn', 'slight left'],
+    18: ['turn', 'slight right'], 19: ['turn', 'sharp right'],
+    200: ['depart', ''],       201: ['arrive', ''],
+  };
+
+  function fetchTmapRoute(from, dest) {
+    // 자동차 모드는 TMAP 보행자 API 대상이 아니다
+    if (navProfile === 'driving') return fetchOSRMRoute(from, dest);
+
+    return fetch('https://apis.openapi.sk.com/tmap/routes/pedestrian?version=1&format=json', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'appKey': TMAP_KEY },
+      body: JSON.stringify({
+        startX: from.lng, startY: from.lat,
+        endX: dest.lng,   endY: dest.lat,
+        reqCoordType: 'WGS84GEO', resCoordType: 'WGS84GEO',
+        startName: '출발', endName: '도착',
+      }),
+    }).then(r => r.json()).then(d => {
+      const feats = d.features || [];
+      if (!feats.length) throw new Error(d.error && d.error.message || 'TMAP 경로 없음');
+
+      const head = (feats[0] && feats[0].properties) || {};
+      const pts = [];
+      const steps = [];
+
+      for (const f of feats) {
+        const pr = f.properties || {}, g = f.geometry || {};
+        if (g.type === 'LineString') {
+          // 경로선 — 중복 좌표는 건너뛴다
+          for (const c of g.coordinates) {
+            const last = pts[pts.length - 1];
+            if (!last || last[0] !== c[0] || last[1] !== c[1]) pts.push(c);
+          }
+        } else if (g.type === 'Point') {
+          const [type, mod] = TMAP_TURN[pr.turnType] || ['turn', 'straight'];
+          steps.push({
+            distance: 0,        // 아래에서 다음 지점까지 거리로 채운다
+            duration: 0,
+            name: (pr.description || '').replace(/^,\s*/, '').trim(),
+            maneuver: { type, modifier: mod, location: g.coordinates },
+          });
+        }
+      }
+      if (pts.length < 2) throw new Error('TMAP 경로 좌표 부족');
+
+      // 각 안내 지점 사이 거리 채우기
+      for (let i = 0; i < steps.length - 1; i++) {
+        const a = steps[i].maneuver.location, b = steps[i + 1].maneuver.location;
+        steps[i].distance = Math.round(
+          Math.hypot((b[1] - a[1]) * 111320, (b[0] - a[0]) * 111320 * Math.cos(a[1] * Math.PI / 180))
+        );
+      }
+      if (!steps.length || steps[steps.length - 1].maneuver.type !== 'arrive') {
+        steps.push({ distance: 0, duration: 0, name: '',
+          maneuver: { type: 'arrive', modifier: '', location: pts[pts.length - 1] } });
+      }
+
+      return {
+        distance: head.totalDistance || 0,
+        duration: head.totalTime || 0,      // TMAP은 초 단위
+        geometry: { coordinates: pts },
+        legs: [{ steps }],
+      };
+    });
+  }
+
+  // 나라에 따라 경로 엔진을 고른다. 실패하면 OSRM으로 넘어간다.
   function fetchRoute(from, dest) {
     if (currentCountry() === 'cn') {
       return fetchTencentRoute(from, dest).catch(e => {
@@ -927,7 +1006,10 @@
         return fetchOSRMRoute(from, dest);
       });
     }
-    return fetchOSRMRoute(from, dest);
+    return fetchTmapRoute(from, dest).catch(e => {
+      console.warn('TMAP 경로 실패, OSRM으로 대체:', e && e.message);
+      return fetchOSRMRoute(from, dest);
+    });
   }
 
   // ── OSRM (한국·그 외 / 텐센트 실패 시 대체) ──
