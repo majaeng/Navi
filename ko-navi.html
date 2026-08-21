@@ -279,6 +279,9 @@
 <script>
   const KAKAO_JS_KEY = '14b2d81032a1fb85494844643078aadc';
   const MAPBOX_TOKEN = 'pk.eyJ1IjoibWFqYWVuZyIsImEiOiJjbXNlNTk5eWwwNWgyMnhzOGUxdG5vM3RoIn0.AqqL86GG17pLS0MaSkN4ig';
+  // 폰에서 보낸 목적지를 받아오는 릴레이
+  const DEST_RELAY = 'https://dest-relay.majaeng.workers.dev';
+
   const TENCENT_KEY = 'VHLBZ-H7XCB-ZKJUJ-NDVGG-6C4OH-FDFOX';
 
   // 중국 영역 판단 (한국/일본 제외)
@@ -1394,9 +1397,42 @@
   document.getElementById('search-back-btn').addEventListener('click', closeSearch);
   document.getElementById('back-btn').addEventListener('click', () => { stopNav(); showScreen('screen-home'); buildHome(); focusHome(0); });
 
+  // ══════════════════════════════════════════
+  //  폰에서 보낸 목적지 받기
+  //  · 앱이 켜질 때 한 번 확인하고, 대기 중에는 5초마다 다시 본다.
+  //  · 안내 중에는 확인하지 않는다 (경로가 중간에 바뀌면 곤란하다).
+  //  · 같은 목적지를 두 번 시작하지 않도록 보낸 시각으로 구분한다.
+  // ══════════════════════════════════════════
+  let lastDestAt = 0;
+  try { lastDestAt = parseInt(localStorage.getItem('navi.destAt')) || 0; } catch (e) {}
+
+  function checkRelay() {
+    // 안내 중이거나 검색 중이면 건드리지 않는다
+    const home = document.getElementById('screen-home');
+    if (!home || !home.classList.contains('active')) return;
+
+    fetch(DEST_RELAY + '/dest', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(d => {
+        const dest = d && d.dest;
+        if (!dest || !dest.at || dest.at <= lastDestAt) return;
+        lastDestAt = dest.at;
+        try { localStorage.setItem('navi.destAt', String(dest.at)); } catch (e) {}
+        startNav({
+          name: dest.name || '목적지',
+          addr: dest.addr || '',
+          lat: dest.lat, lng: dest.lng,
+          icon: '📲',
+        });
+      })
+      .catch(() => {});   // 릴레이가 없어도 앱은 평소대로 동작해야 한다
+  }
+
   // ── 시작 ──
   buildHome();
   getLocation();
+  checkRelay();
+  setInterval(checkRelay, 5000);
 </script>
 </body>
 </html>
