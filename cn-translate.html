@@ -950,15 +950,45 @@
       finishedText = text;
       liveSeq++;              // 진행 중이던 미리보기 무효화
       clearTimeout(flyPending); flyPending = null;
-      translateLive(text);
+      previewSrc = '';
+      liveText = '';          // 미리보기는 확정 문장으로 대체된다
+
+      // 구두점 기준으로 문장을 나눈다.
+      // ※ 예전엔 규칙(어절·조사)으로 추측하다 단어 중간을 잘라 뜻이 깨졌다.
+      //   최종 결과에는 인식 모델이 찍은 구두점이 있으므로 그걸 그대로 쓴다.
+      for (const sent of splitSentences(text)) translateLive(sent);
+
       flySlices = [];
       return;
     }
 
-    // ── 말하는 중: 미리보기 ──
-    // 확정 줄은 절대 건드리지 않고, 맨 아래 흐린 줄만 갱신한다.
-    // 읽던 글자가 바뀌지 않으므로 계속 떠도 방해되지 않는다.
-    schedulePreview(text);
+    // ※ 말하는 중에는 화면을 건드리지 않는다.
+    //   글자가 계속 바뀌면 읽는 눈이 따라가지 못한다.
+    //   듣고 있다는 표시는 상단 상태 점이 대신한다.
+  }
+
+  // ══════════════════════════════════════════
+  //  문장 나누기
+  //  마침표·물음표·느낌표·말줄임 뒤에서 자른다.
+  //  중국어 전각 부호와 반각 부호를 모두 본다.
+  //  쉼표(，)로는 자르지 않는다 — 너무 잘게 쪼개져 문맥이 깨진다.
+  //  ※ 구두점이 없으면 통째로 한 문장으로 본다.
+  // ══════════════════════════════════════════
+  function splitSentences(text) {
+    const MARKS = '\u3002\uFF01\uFF1F!?\u2026';   // 。！？ ! ? …
+    const out = [];
+    let buf = '';
+    for (const ch of text) {
+      buf += ch;
+      if (MARKS.includes(ch)) {
+        const t = buf.trim();
+        if (t) out.push(t);
+        buf = '';
+      }
+    }
+    const rest = buf.trim();
+    if (rest) out.push(rest);
+    return out.length ? out : [text.trim()];
   }
 
   // ══════════════════════════════════════════
@@ -1041,20 +1071,14 @@
   // 짧은 쉼(0.6초)마다 끊기므로 조각이 잦다. 계속 이어 말하는 중이면
   // 같은 줄에 이어붙이고, 충분히 쉬었으면 새 줄에서 시작한다.
   function commitLine(t) {
-    const now = performance.now();
-    const sameBreath = lines.length > 0 && (now - lastCommitAt) < SAME_LINE_MS;
+    // ※ 한 번 화면에 오른 줄은 다시 손대지 않는다.
+    //   예전엔 "3초 안에 이어 말하면 같은 줄에 붙인다"는 규칙이 있었는데,
+    //   읽고 있는 줄에 글자가 계속 자라서 눈이 따라가지 못했다.
+    lines.push(t);
+    if (lines.length > MAX_LINES) lines.shift();
 
-    if (sameBreath) {
-      const i = lines.length - 1;
-      lines[i] = (lines[i] + ' ' + t).trim();
-    } else {
-      lines.push(t);
-      if (lines.length > MAX_LINES) lines.shift();
-    }
-    lastCommitAt = now;
+    lastCommitAt = performance.now();
     lastTranslated = t;
-    liveText = '';        // 미리보기는 확정 줄로 흡수됐다
-    previewSrc = '';
     renderLines();
   }
 
