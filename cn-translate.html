@@ -146,7 +146,7 @@
   </div>
 
   <!-- 엔진 (우상단) -->
-  <div class="engine hq" id="engine-pill">讯飞</div>
+  <div class="engine hq" id="engine-pill">AAI</div>
 
   <!-- 번역 영역 -->
   <!-- 번역 영역 — 화면 전체를 번역이 사용 -->
@@ -191,7 +191,7 @@
   const IFLYTEK_AUTH_PROXY = 'https://iflytek-auth.majaeng.workers.dev';
 
   // 엔진 우선순위: iflytek → aai → browser (앞이 실패하면 다음으로)
-  let sttMode = 'iflytek';
+  let sttMode = 'aai';
   let flySocket = null;
   let flyFirstFrame = true;
   let flySlices = [];              // wpgs 스트리밍 결과 조각들
@@ -1178,9 +1178,16 @@
     if (!(await openMic())) return false;
 
     // 3) WebSocket 연결
+    //  · language_codes=["zh"]  중국어로 고정 (Universal-3.5 Pro 전용)
+    //  · format_turns=true      확정 결과에 구두점을 붙여 준다
+    //  · max_turn_silence       이 시간 이상 조용하면 구두점과 무관하게 턴을 끊는다.
+    //    기본 1536ms 인데, 문장이 완결되면 그 전에 알아서 끊긴다.
     const params = new URLSearchParams({
       sample_rate: SAMPLE_RATE,
       speech_model: AAI_MODEL,
+      language_codes: '["zh"]',
+      format_turns: 'true',
+      max_turn_silence: '900',
       token,
     });
     aaiSocket = new WebSocket(`${AAI_WS}?${params}`);
@@ -1188,29 +1195,39 @@
 
     aaiSocket.onopen = () => {
       isListening = true;
-      setStatus('listening', '듣는 중...');
-      $btn.classList.add('active');
-      $btn.textContent = '⏹';
+      setStatus('listening', '듣는 중…');
       pipeAudio(buf => {
-        if (aaiSocket?.readyState === WebSocket.OPEN) aaiSocket.send(buf);
+        if (aaiSocket && aaiSocket.readyState === WebSocket.OPEN) aaiSocket.send(buf);
       });
     };
 
+    let aaiDone = '';   // 이미 처리한 확정 문장 (중복 방지)
+
     aaiSocket.onmessage = ev => {
       let msg;
-      try { msg = JSON.parse(ev.data); } catch { return; }
+      try { msg = JSON.parse(ev.data); } catch (e) { return; }
       if (msg.type !== 'Turn') return;
 
       const text = (msg.transcript || '').trim();
       if (!text) return;
 
-      // 중간 결과: 원문만 갱신
+      dbg.lastText = text;
       $orig.textContent = text;
 
-      // 최종 결과: 번역
-      if (msg.end_of_turn && text.length > 1) {
-        translate(text);
+      if (!msg.end_of_turn && isListening) {
+        setStatus('listening', '듣는 중… ' + text.length + '자');
+        return;                       // 말하는 중에는 화면을 건드리지 않는다
       }
+      if (!msg.end_of_turn) return;
+
+      // 구두점이 붙은 결과만 쓴다. 서식 없는 확정이 먼저 오고
+      // 잠시 뒤 구두점판이 또 오므로, 서식판을 기다린다.
+      if (msg.turn_is_formatted === false) return;
+      if (text === aaiDone) return;
+      aaiDone = text;
+
+      if (!dbg.tRecog && voiceAt) dbg.tRecog = Math.round(performance.now() - voiceAt);
+      for (const sent of splitSentences(text)) translateLive(sent);
     };
 
     aaiSocket.onerror = () => {};   // onclose 에서 일괄 처리
@@ -1447,7 +1464,7 @@
     const $pill = document.getElementById('engine-pill');
     const label = { iflytek: '讯飞', aai: 'AAI', browser: '일반' }[mode] || mode;
     $pill.textContent = label;
-    $pill.classList.toggle('hq', mode === 'iflytek');
+    $pill.classList.toggle('hq', mode === 'iflytek' || mode === 'aai');
   }
 
   // ── 시작/정지 (모드에 따라 분기) ──
