@@ -1178,16 +1178,22 @@
     if (!(await openMic())) return false;
 
     // 3) WebSocket 연결
-    //  · language_codes=["zh"]  중국어로 고정 (Universal-3.5 Pro 전용)
+    //  · language_codes=["zh"]  중국어로 고정
     //  · format_turns=true      확정 결과에 구두점을 붙여 준다
-    //  · max_turn_silence       이 시간 이상 조용하면 구두점과 무관하게 턴을 끊는다.
-    //    기본 1536ms. 문장 사이의 짧은 멈춤도 잡으려고 380ms 로 낮췄다.
+    //  · mode=min_latency       가장 빨리 내놓는 설정
+    //
+    //  턴 종료는 침묵이 아니라 "말이 끝났는지"를 모델이 판단한다.
+    //  다만 판단이 발동하려면 최소한의 멈춤이 필요하다(min_turn_silence).
+    //  문장 사이의 짧은 멈춤도 잡으려고 공식 문서의 '적극적' 설정을 쓴다.
     const params = new URLSearchParams({
       sample_rate: SAMPLE_RATE,
       speech_model: AAI_MODEL,
       language_codes: '["zh"]',
       format_turns: 'true',
-      max_turn_silence: '380',
+      mode: 'min_latency',
+      end_of_turn_confidence_threshold: '0.4',
+      min_turn_silence: '160',    // 이만큼 쉬면 "문장 끝인가" 판단이 돌아간다
+      max_turn_silence: '400',    // 판단이 안 서도 이만큼 조용하면 강제 종료
       token,
     });
     aaiSocket = new WebSocket(`${AAI_WS}?${params}`);
