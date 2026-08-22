@@ -1040,7 +1040,7 @@
 
     commitChain = commitChain
       .then(() => job)
-      .then(t => { if (t) commitLine(t); })
+      .then(t => { if (t) queueLine(t); })
       .catch(() => {});
   }
 
@@ -1070,6 +1070,36 @@
   // 번역 확정 — 화면에 추가한다.
   // 짧은 쉼(0.6초)마다 끊기므로 조각이 잦다. 계속 이어 말하는 중이면
   // 같은 줄에 이어붙이고, 충분히 쉬었으면 새 줄에서 시작한다.
+  // ══════════════════════════════════════════
+  //  줄 내보내기 속도 조절
+  //  한 덩어리에 문장이 여러 개면 번역이 거의 동시에 돌아온다.
+  //  그대로 뿌리면 세 줄이 한꺼번에 꽂혀서 읽을 수가 없다.
+  //  번역은 그대로 동시에 하되, 화면에는 한 줄씩 간격을 두고 올린다.
+  //  ※ 밀리기 시작하면 간격을 좁혀 따라잡는다.
+  // ══════════════════════════════════════════
+  const LINE_GAP_MS = 700;     // 줄 사이 기본 간격
+  const LINE_GAP_FAST = 260;   // 밀렸을 때 간격
+  let pendingLines = [];
+  let revealTimer = null;
+
+  function queueLine(t) {
+    pendingLines.push(t);
+    pumpReveal();
+  }
+
+  function pumpReveal() {
+    if (revealTimer || !pendingLines.length) return;
+    const gap = pendingLines.length > 2 ? LINE_GAP_FAST : LINE_GAP_MS;
+    const since = performance.now() - lastCommitAt;
+    const wait = Math.max(0, gap - since);   // 한참 쉬었다면 바로 내보낸다
+    revealTimer = setTimeout(() => {
+      revealTimer = null;
+      const line = pendingLines.shift();
+      if (line) commitLine(line);
+      pumpReveal();
+    }, wait);
+  }
+
   function commitLine(t) {
     // ※ 한 번 화면에 오른 줄은 다시 손대지 않는다.
     //   예전엔 "3초 안에 이어 말하면 같은 줄에 붙인다"는 규칙이 있었는데,
@@ -1536,6 +1566,7 @@
       lastTranslated = '';
       lines = []; inFlight = 0; lastCommitAt = 0;
       liveText = ''; previewSrc = ''; liveSeq++;
+      pendingLines = []; clearTimeout(revealTimer); revealTimer = null;
       finishedText = ''; renderLines();
       hideCurrency();
       $terms.classList.remove('show');
