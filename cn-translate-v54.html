@@ -1,0 +1,1523 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
+  <meta name="mrbd-web-app-capable" content="yes">
+  <title>중한 실시간 번역</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 600px; height: 600px;
+      background: #000; color: #fff; overflow: hidden;
+      font-family: -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+    }
+
+    /* ══════════════════════════════════════════
+       가산 디스플레이 원칙:
+       · 검정 = 투명. 채워진 배경은 바깥 시야를 가리므로 쓰지 않음
+       · 가장자리는 왜곡·감광 구간이므로 안전 영역(54px)을 비움
+       · 정보는 밝기 단계로 구분 (테두리·배경 대신 명암으로)
+       ══════════════════════════════════════════ */
+
+    :root {
+      /* 메타 공식 가이드라인: 안전 여백 8dp (전체화면 앱 24dp) */
+      --safe: 24px;
+      --fs: 24px;                /* 번역 글자 크기 — 상/하 스와이프로 조절 */
+      --ink-1: #fff;             /* 주 정보 */
+      --ink-2: rgba(255,255,255,0.40);
+      --ink-3: rgba(255,255,255,0.22);
+      --accent: #7db8ff;
+      --money: #ffc95a;
+    }
+
+    #app {
+      width: 600px; height: 600px;
+      position: relative;
+      padding: var(--safe);
+    }
+
+    /* ── 상단: 상태 (점 + 최소 텍스트) ── */
+    .status {
+      position: absolute; top: var(--safe); left: var(--safe);
+      display: flex; align-items: center; gap: 9px;
+      cursor: pointer;                     /* 브라우저 테스트용 */
+      padding: 6px 10px; margin: -6px -10px;  /* 클릭 영역만 넓힘 */
+    }
+    /* 조작 힌트 — 아주 낮은 대비로 상시 표시 */
+    .status-key {
+      font-size: 13px; color: var(--ink-3);
+      letter-spacing: 0.2px;
+    }
+    .status-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: rgba(255,255,255,0.3); transition: background 300ms;
+      flex-shrink: 0;
+    }
+    .status-dot.listening { background: var(--accent); animation: blink 1.6s infinite; }
+    .status-dot.translating { background: #8effa8; }
+    .status-text {
+      font-size: 15px; color: var(--ink-2);
+      letter-spacing: 0.2px;
+    }
+    @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+    /* 엔진 표시 — 우상단, 아주 낮은 대비 */
+    .engine {
+      position: absolute; top: var(--safe); right: var(--safe);
+      font-size: 13px; color: var(--ink-3); letter-spacing: 0.4px;
+    }
+    .engine.hq { color: rgba(141,255,168,0.45); }
+
+    /* ── 중앙: 번역 영역 ── */
+    .stage {
+      position: absolute; top: 50%; left: var(--safe); right: var(--safe);
+      transform: translateY(-50%);
+    }
+
+    /* 번역 창 — 자막처럼 3줄만 보이고 위로 흘러감.
+       위쪽은 서서히 사라지게 해서 읽는 흐름을 방해하지 않는다. */
+    /* 원문·용어·이전번역 줄을 없애고 그 공간을 번역에 넘김 */
+    .hidden-refs { display: none; }
+
+    .trans-window {
+      height: calc(var(--fs) * 1.45 * 10);
+      overflow: hidden;
+      scroll-behavior: smooth;
+      /* 위쪽을 살짝만 흐리게 — 과하면 글자가 잘린 것처럼 보인다 */
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 9%);
+      mask-image: linear-gradient(to bottom, transparent 0, #000 9%);
+    }
+
+    /* 번역 한국어 (주 정보) */
+    .translated-text {
+      font-size: var(--fs); font-weight: 600; color: var(--ink-1);
+      line-height: 1.45; word-break: keep-all;
+      letter-spacing: -0.3px;
+      transition: color 250ms;
+      white-space: pre-wrap;      /* 발화 구분 줄바꿈 반영 */
+    }
+    .translated-text.empty {
+      color: var(--ink-3); font-weight: 400; font-size: 19px;
+      letter-spacing: 0;
+    }
+    /* 아직 확정되지 않은 꼬리 부분만 살짝 흐리게.
+       확정된 앞부분은 밝기가 바뀌지 않아 깜빡임이 없다. */
+    .translated-text .tail { color: rgba(255,255,255,0.72); }
+
+    /* ── 하단: 환율 (테두리 없이 텍스트만) ── */
+    .currency {
+      position: absolute; bottom: var(--safe); left: var(--safe);
+      display: none; align-items: baseline; gap: 10px;
+    }
+    .currency.show { display: flex; }
+    .currency-cny { font-size: 16px; color: rgba(255,201,90,0.5); }
+    .currency-krw { font-size: 25px; font-weight: 600; color: var(--money); }
+
+    /* 진단 패널 (D키) — 기본 숨김 */
+    .debug {
+      position: absolute; left: var(--safe); right: var(--safe); bottom: var(--safe);
+      font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+      color: rgba(255,255,255,0.6); line-height: 1.65;
+      display: none; text-align: left; white-space: pre-wrap;
+    }
+    .debug.show { display: block; }
+    .debug b { color: #8effa8; font-weight: 400; }
+    .debug .err { color: #ff9a9a; }
+
+    /* 알림 — 배경 없이 글자만 */
+    .toast {
+      position: absolute; bottom: var(--safe); right: var(--safe);
+      font-size: 14px; color: #ff9a9a;
+      opacity: 0; transition: opacity 300ms; pointer-events: none;
+      text-align: right; max-width: 60%;
+    }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- 상태 (좌상단) · 클릭하면 시작·정지 -->
+  <div class="status" id="status" onclick="toggleListen()">
+    <div class="status-dot" id="status-dot"></div>
+    <span class="status-text" id="status-text">준비</span>
+    <span class="status-key" id="status-key">· Enter 시작</span>
+  </div>
+
+  <!-- 엔진 (우상단) -->
+  <div class="engine hq" id="engine-pill">讯飞</div>
+
+  <!-- 번역 영역 -->
+  <!-- 번역 영역 — 화면 전체를 번역이 사용 -->
+  <div class="stage">
+    <div class="trans-window" id="trans-window">
+      <div class="translated-text empty" id="translated-text">중국어를 말하면 번역됩니다</div>
+    </div>
+  </div>
+
+  <!-- 진단용 (D키로만 보임) -->
+  <div class="hidden-refs">
+    <span id="prev-text"></span>
+    <span id="terms"></span>
+    <span id="original-text"></span>
+  </div>
+
+  <!-- 환율 -->
+  <div class="currency" id="currency-badge">
+    <span class="currency-cny" id="currency-cny"></span>
+    <span class="currency-krw" id="currency-krw"></span>
+  </div>
+
+  <div class="debug" id="debug"></div>
+  <div class="toast" id="toast"></div>
+</div>
+
+<!-- 용어 사전 (별도 파일 — 여기만 수정하면 됨) -->
+<script src="glossary.js"></script>
+<script>
+  const PAPAGO_PROXY = 'https://papago-proxy.majaeng.workers.dev';
+  const ER_API = 'https://open.er-api.com/v6/latest/CNY';
+
+  // ── AssemblyAI 토큰 프록시 (고정밀 모드) ──
+  // ⚠️ 아직 미설정: Cloudflare Worker 만든 뒤 아래 주소를 채우면 활성화됨
+  const AAI_TOKEN_PROXY = 'https://aai-token.majaeng.workers.dev';
+  const AAI_WS = 'wss://streaming.assemblyai.com/v3/ws';
+  const AAI_MODEL = 'universal-3-5-pro';   // 중국어(Mandarin) 지원 모델
+  const SAMPLE_RATE = 16000;
+
+  // ── iFlytek 인증 프록시 (메인 엔진) ──
+  // ⚠️ 아직 미설정: Worker 만든 뒤 아래 주소를 채우면 활성화됨
+  const IFLYTEK_AUTH_PROXY = 'https://iflytek-auth.majaeng.workers.dev';
+
+  // 엔진 우선순위: iflytek → aai → browser (앞이 실패하면 다음으로)
+  let sttMode = 'iflytek';
+  let flySocket = null;
+  let flyFirstFrame = true;
+  let flySlices = [];              // wpgs 스트리밍 결과 조각들
+  let flyCarry = new Uint8Array(0);  // 프레임 경계에 걸친 잔여 바이트
+  let flyPending = null;             // 중간결과 번역 디바운스
+  let flyPreroll = [];               // 세션 열리기 직전 음성 보관
+  let flyOpening = false;            // 세션 여는 중 중복 방지
+  let flyOpenGuard = null;           // 연결 지연 시 플래그 해제
+  let flyQuietSince = 0;
+  let noiseFloor = 0;                // 주변 소음 수준 (자동 학습)
+  const VOICE_FLOOR = 0.012;         // 최소 판정선 (이보다 작으면 소음으로 간주)
+  let voiceRun = 0;                  // 연속으로 기준을 넘은 프레임 수
+  const VOICE_RUN_MIN = 2;           // 약 0.5초 이상 이어져야 말소리로 인정
+                                     // (더 키우면 시작이 눈에 띄게 늦어진다)
+  let gain = 1;                      // 소프트웨어 증폭 배율
+  let peakTracker = 0;               // 최근 최대 진폭
+  const TARGET_PEAK = 0.35;          // 증폭 목표 레벨
+  const MAX_GAIN = 12;               // 최대 증폭 배율 (높이면 잡음까지 커져 인식 방해)
+  // 세션이 끊긴 사이의 음성만 보관한다.
+  // 너무 크게 잡으면 이미 처리된 음성까지 다시 보내 중복 번역이 된다.
+  const PREROLL_CHUNKS = 6;          // 약 1.5초 분량
+  let flyReopen = null;            // 세션 재연결 타이머
+  let flyRotate = null;            // 60초 만료 전 교대 타이머
+  let flyAppId = '';
+  const FLY_FRAME_BYTES = 1280;    // iFlytek 규격
+  let aaiSocket = null;
+  let audioCtx = null;
+  let mediaStream = null;
+  let procNode = null;
+  let srcNode = null;
+
+  let recognition = null;
+  let isListening = false;
+  let translateTimer = null;
+  let lastOriginal = '';
+  let lastTranslated = '';
+  let lastSent = '';               // 같은 문장 중복 번역 방지
+  // ── 표시 상태 ──
+  // 문장을 쪼개지 않는다. 말하는 중인 문장 하나를 통째로 번역해 교체하고,
+  // 끝나면 확정해서 위로 올린다.
+  let lines = [];            // 확정된 문장들 (더는 바뀌지 않음)
+  let inFlight = 0;
+  const MAX_LINES = 14;      // 화면에 유지할 확정 문장 수
+  let liveSeq = 0;           // 미리보기 세대 번호
+  let liveText = '';         // 말하는 중인 문장의 번역(흐린 줄)
+  let lastCommitAt = 0;      // 마지막으로 화면에 올린 시각
+  const SAME_LINE_MS = 3000; // 이 안에 이어지면 같은 줄로 본다
+  const MIN_SOLID = 4;             // 이보다 짧은 조각은 소음으로 보고 버림
+  // ── 긴 발화 분할 ──
+  // 누적 전체를 매번 번역하면 길어질수록 느려져 타임아웃이 난다.
+  // 끝난 문장만 떼어 번역하고 결과를 이어 붙인다.
+  const SENT_END = /[。！？；…]/;    // 문장 끝 (가장 좋은 분할점)
+  const CLAUSE_END = /[，、]/;      // 절 끝 (차선책)
+  // 값이 작을수록 빠르고, 클수록 문맥이 살아난다.
+  const REVEAL_MS = 50;            // 글자가 드러나는 간격 (작을수록 빠름)
+  let voiceAt = 0;                 // 말이 시작된 시각 (지연 측정용)
+  let papagoFails = 0;             // 파파고 연속 실패 횟수
+  let papagoBlockedAt = 0;         // 파파고를 건너뛰기 시작한 시각
+  let flytekMtBroken = false;      // iFlytek 번역 사용 불가 (미구독 등)
+  const PAPAGO_BACKOFF_MS = 4000;  // 이 시간 동안만 보조 엔진을 먼저 시도
+  let cnyToKrw = null; // 환율 캐시
+
+  // ── 환율 로드 (앱 시작시 1회) ──
+  async function loadRate() {
+    try {
+      const res = await fetch(ER_API);
+      const data = await res.json();
+      cnyToKrw = data?.rates?.KRW;
+    } catch(e) {}
+  }
+  loadRate();
+
+  // ── 환율 변환 ──
+  // 중국어 숫자 단위 파싱 (万=10000, 千=1000, 百=100, 十=10)
+  const CN_NUM = {'零':0,'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'两':2};
+  const CN_UNIT = {'十':10,'百':100,'千':1000,'万':10000,'亿':100000000};
+
+  function parseChinese(s) {
+    let result = 0, cur = 0, tmp = 0;
+    for (const c of s) {
+      if (CN_NUM[c] !== undefined) { tmp = CN_NUM[c]; }
+      else if (CN_UNIT[c] !== undefined) {
+        const u = CN_UNIT[c];
+        if (u >= 10000) { result = (result + cur + tmp) * u; cur = 0; tmp = 0; }
+        else { cur += (tmp || 1) * u; tmp = 0; }
+      }
+    }
+    return result + cur + tmp;
+  }
+
+  function detectAmount(text) {
+    // 아라비아 숫자 + 위안 단위
+    const arabicMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:块|元|人民币|块钱|元钱)/);
+    if (arabicMatch) return parseFloat(arabicMatch[1]);
+
+    // 한자 숫자 + 위안 단위
+    const cnMatch = text.match(/([零一二三四五六七八九两十百千万亿]+)\s*(?:块|元|人民币|块钱|元钱)/);
+    if (cnMatch) {
+      const val = parseChinese(cnMatch[1]);
+      if (val > 0) return val;
+    }
+    return null;
+  }
+
+  function showCurrency(cny) {
+    if (!cnyToKrw || !cny) { hideCurrency(); return; }
+    const krw = Math.round(cny * cnyToKrw);
+    document.getElementById('currency-cny').textContent = `¥${cny.toLocaleString()}`;
+    document.getElementById('currency-krw').textContent = `${krw.toLocaleString()}원`;
+    document.getElementById('currency-badge').classList.add('show');
+  }
+
+  function hideCurrency() {
+    document.getElementById('currency-badge').classList.remove('show');
+  }
+
+  // ── UI 참조 ──
+  const $dot    = document.getElementById('status-dot');
+  const $status = document.getElementById('status-text');
+  const $key    = document.getElementById('status-key');
+  const $orig   = document.getElementById('original-text');
+  const $trans  = document.getElementById('translated-text');
+  const $prev   = document.getElementById('prev-text');
+  // 마이크 버튼은 안경에 터치가 없어 제거됨.
+  // 기존 호출부를 그대로 두기 위한 빈 대체 객체.
+  const $btn = { classList: { add(){}, remove(){} }, set textContent(v){}, get textContent(){ return ''; } };
+  const $toast  = document.getElementById('toast');
+
+  // ── 상태 업데이트 ──
+  function setStatus(state, text) {
+    $dot.className = 'status-dot' + (state ? ' ' + state : '');
+    $status.textContent = text;
+    // 지금 무엇을 할 수 있는지 항상 표시
+    if ($key) $key.textContent = isListening ? '· Enter 정지' : '· Enter 시작';
+  }
+
+  // ── 진단 패널 ──
+  const dbg = {
+    mic: '-', rms: 0, peak: 0, thr: 0, gain: 1, session: '없음',
+    tToken: 0, tOpen: 0, tRecog: 0, tTrans: 0,
+    frames: 0, recv: 0, lastText: '-', lastErr: '-', trans: '-',
+  };
+  const $debug = document.getElementById('debug');
+
+  function renderDebug() {
+    if (!$debug.classList.contains('show')) return;
+    const scale = Math.max(dbg.peak, 0.02);
+    const bar = '█'.repeat(Math.min(20, Math.round(dbg.rms / scale * 20)));
+    $debug.innerHTML =
+      `엔진 <b>${sttMode}</b>   세션 <b>${dbg.session}</b>   마이크 <b>${dbg.mic}</b>\n` +
+      `음량 ${bar || '·'} ${dbg.rms.toFixed(4)} / 기준 ${dbg.thr.toFixed(4)}   증폭 <b>x${dbg.gain.toFixed(1)}</b>\n` +
+      `보낸프레임 <b>${dbg.frames}</b>   받은응답 <b>${dbg.recv}</b>\n` +
+      `지연  연결 <b>${dbg.tOpen}</b>ms  인식 <b>${dbg.tRecog}</b>ms  번역 <b>${dbg.tTrans}</b>ms\n` +
+      `인식 ${dbg.lastText}\n` +
+      `번역 ${dbg.trans}\n` +
+      (dbg.lastErr !== '-' ? `<span class="err">오류 ${dbg.lastErr}</span>` : '');
+  }
+  setInterval(renderDebug, 250);
+
+  function showToast(msg) {
+    $toast.textContent = msg;
+    $toast.classList.add('show');
+    setTimeout(() => $toast.classList.remove('show'), 3000);
+  }
+
+  // ── 번역 (파파고) ──
+  // ── 번역 캐시 ──
+  // 자주 나오는 표현은 왕복 없이 즉시 표시 (지연 0)
+  // 브라우저에 저장돼서 앱을 껐다 켜도 유지됨
+  const CACHE_KEY = 'cn_translate_cache_v1';
+  const CACHE_MAX = 5000;          // 보관 문장 수
+  let cacheDirty = false;
+
+  // ── 캐시 조회용 정규화 ──
+  // 같은 말인데 문장부호나 말끝 어조사만 다른 경우를 같은 것으로 취급.
+  // 예) "好的。" "好的吧" "嗯，好的" → 모두 "好的"
+  // ※ 뜻이 바뀌는 어조사(吗/呢)는 건드리지 않음
+  const FILLER_HEAD = /^(嗯|啊|呃|哦|噢|那个|就是说|就是|然后)+/;
+  const FILLER_TAIL = /(吧|啊|呀|嘛|哦|噢|了啊)+$/;
+  const PUNCT = /[。，、！？；：""''《》()（）\s.,!?;:]/g;
+
+  function normalize(text) {
+    let t = text.replace(PUNCT, '');
+    t = t.replace(FILLER_HEAD, '');
+    // 어조사는 한 번만 떼어냄 (과하게 깎으면 뜻이 달라짐)
+    if (t.length > 2) t = t.replace(FILLER_TAIL, '');
+    return t || text;
+  }
+
+  // 미리 외워둔 문장 (glossary.js) — 서버를 안 거치므로 지연 0
+  // 정규화한 형태로 저장해 변형에도 걸리게 함
+  const seedPhrases = Object.entries(window.GLOSSARY_PHRASES || {})
+    .map(([k, v]) => [normalize(k), v]);
+
+  // 저장된 캐시 불러오기 (기본 표현 + 그동안 쌓인 것)
+  const seedKeys = new Set(seedPhrases.map(([k]) => k));
+  const transCache = new Map(seedPhrases);
+  try {
+    const saved = JSON.parse(localStorage.getItem(CACHE_KEY) || '[]');
+    for (const [k, v] of saved) transCache.set(k, v);
+  } catch(e) {}
+
+  // 변경분을 주기적으로 저장 (매번 쓰면 느려지므로 5초마다)
+  function saveCache() {
+    if (!cacheDirty) return;
+    cacheDirty = false;
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify([...transCache]));
+    } catch(e) {
+      // 용량 초과 시 절반으로 줄여서 재시도
+      const half = [...transCache].slice(-Math.floor(transCache.size / 2));
+      transCache.clear();
+      for (const [k, v] of seedPhrases) transCache.set(k, v);
+      for (const [k, v] of half) transCache.set(k, v);
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify([...transCache])); } catch(e2) {}
+    }
+  }
+  setInterval(saveCache, 5000);
+  window.addEventListener('pagehide', saveCache);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveCache();
+  });
+
+  // ══════════════════════════════════════════
+  //  유사 문장 찾기 (미리보기용)
+  //
+  //  완전히 같지 않아도 비슷한 캐시 문장을 찾아 먼저 흐리게 보여준다.
+  //  진짜 번역이 도착하면 즉시 교체되므로 틀린 채로 남지 않는다.
+  //
+  //  ⚠️ 뜻이 뒤집히는 경우는 절대 매칭하지 않는다:
+  //     · 부정어(不/没/别/无/未) 유무가 다르면 제외
+  //     · 숫자가 다르면 제외
+  // ══════════════════════════════════════════
+  const NEG = /[不没别无未]/g;
+  const NUM = /[0-9零一二三四五六七八九十百千万亿两]/g;
+  const QUES = /[吗呢?？]|什么|怎么|为什么|哪儿|哪里|几点|多少/g;
+  const SIM_THRESHOLD = 0.72;   // 이 이상 비슷해야 미리보기
+
+  function signature(s) {
+    return {
+      neg: (s.match(NEG) || []).join(''),
+      num: (s.match(NUM) || []).join(''),
+      // 의문문과 평서문이 섞이지 않도록
+      ques: (s.match(QUES) || []).length > 0,
+    };
+  }
+
+  // 두 글자 묶음 기준 유사도 (0~1)
+  function similarity(a, b) {
+    if (a === b) return 1;
+    if (a.length < 2 || b.length < 2) return 0;
+    const grams = new Map();
+    for (let i = 0; i < a.length - 1; i++) {
+      const g = a.slice(i, i + 2);
+      grams.set(g, (grams.get(g) || 0) + 1);
+    }
+    let match = 0;
+    for (let i = 0; i < b.length - 1; i++) {
+      const g = b.slice(i, i + 2);
+      const c = grams.get(g);
+      if (c > 0) { grams.set(g, c - 1); match++; }
+    }
+    return (2 * match) / (a.length - 1 + b.length - 1);
+  }
+
+  function findSimilar(text) {
+    const sig = signature(text);
+    const len = text.length;
+    let best = null, bestScore = SIM_THRESHOLD;
+
+    for (const [k, v] of transCache) {
+      // 길이가 많이 다르면 건너뜀 (속도)
+      if (Math.abs(k.length - len) > Math.max(3, len * 0.4)) continue;
+      // 부정어·숫자가 다르면 뜻이 뒤집힐 수 있으므로 제외
+      const ks = signature(k);
+      if (ks.neg !== sig.neg || ks.num !== sig.num || ks.ques !== sig.ques) continue;
+
+      const s = similarity(text, k);
+      if (s > bestScore) { bestScore = s; best = v; }
+    }
+    return best;
+  }
+
+  function esc(s) {
+    return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  }
+
+  // ── 번역 엔진 (파파고 우선 → iFlytek 폴백) ──
+  // 파파고가 느리거나 막히면(중국 등) 자동으로 iFlytek으로 넘어감
+  const PAPAGO_TIMEOUT = 3000;   // 조각이 최대 140자이므로 여유 있게
+
+  async function papagoTranslate(text) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), PAPAGO_TIMEOUT);
+    try {
+      const res = await fetch(PAPAGO_PROXY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `source=zh-CN&target=ko&text=${encodeURIComponent(text)}`,
+        signal: ctl.signal,
+      });
+      const data = await res.json();
+      return data?.message?.result?.translatedText || '';
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function flytekTranslate(text) {
+    if (!IFLYTEK_AUTH_PROXY) return '';
+    const res = await fetch(IFLYTEK_AUTH_PROXY, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json();
+    return data?.translated || '';
+  }
+
+  // 파파고는 절대 영구히 건너뛰지 않는다. 매번 시도한다.
+  // 다만 최근에 연속 실패했고 보조 엔진이 살아있다면 순서만 바꿔
+  // 대기 시간을 아낀다.
+  async function tryFlytek(text) {
+    if (flytekMtBroken) return '';
+    try {
+      const t = await flytekTranslate(text);
+      if (t) return t;
+    } catch(e) {}
+    flytekMtBroken = true;   // 미구독 등 — 더는 호출하지 않음
+    return '';
+  }
+
+  async function translateVia(text) {
+    const papagoShaky = papagoFails >= 3 &&
+                        (Date.now() - papagoBlockedAt) < PAPAGO_BACKOFF_MS;
+
+    // 파파고가 불안정하면 보조 엔진 먼저
+    if (papagoShaky && !flytekMtBroken) {
+      const t = await tryFlytek(text);
+      if (t) return t;
+    }
+
+    // 파파고 시도 (항상)
+    try {
+      const t = await papagoTranslate(text);
+      if (t) { papagoFails = 0; return t; }
+      papagoFails++;
+    } catch(e) {
+      papagoFails++;
+    }
+    if (papagoFails === 3) papagoBlockedAt = Date.now();
+
+    // 아직 안 써봤다면 보조 엔진
+    return await tryFlytek(text);
+  }
+
+  // ── 용어 사전 ──
+  const FIXES = window.GLOSSARY_FIXES || {};
+  const TERMS = window.GLOSSARY_TERMS || {};
+  // 긴 용어부터 매칭 (짧은 게 먼저 걸리는 것 방지)
+  const TERM_KEYS = Object.keys(TERMS).sort((a, b) => b.length - a.length);
+  const $terms = document.getElementById('terms');
+  const $transWin = document.getElementById('trans-window');
+
+  // 잘못 인식된 표기를 올바른 한자로 교정
+  function applyFixes(text) {
+    let out = text;
+    for (const [wrong, right] of Object.entries(FIXES)) {
+      if (out.includes(wrong)) out = out.split(wrong).join(right);
+    }
+    return out;
+  }
+
+  // 원문에 업계 용어가 있으면 화면에 힌트 표시 (최대 2개)
+  function showTerms(text) {
+    const hits = [], taken = [];
+    for (const k of TERM_KEYS) {
+      if (!text.includes(k)) continue;
+      // 이미 잡힌 용어에 포함되는 짧은 말은 건너뜀 (虚幻引擎 다음의 引擎)
+      if (taken.some(t => t.includes(k))) continue;
+      taken.push(k);
+      hits.push(`${k} · ${TERMS[k]}`);
+      if (hits.length >= 2) break;
+    }
+    if (hits.length) {
+      $terms.textContent = hits.join('   ');
+      $terms.classList.add('show');
+    } else {
+      $terms.classList.remove('show');
+    }
+  }
+
+  // 번역만 담당한다. 화면 표시는 호출한 쪽에서 한다.
+  async function translateCurrent(text) {
+    text = (text || '').trim();
+    if (!text) return '';
+    showTerms(text);
+
+    const amount = detectAmount(text);
+    amount ? showCurrency(amount) : hideCurrency();
+
+    // 캐시 적중 → 네트워크 없이 즉시 (문장부호·어조사 차이는 무시)
+    const key = normalize(text);
+    const hit = transCache.get(key);
+    if (hit) {
+      if (!seedKeys.has(key)) {
+        transCache.delete(key); transCache.set(key, hit); cacheDirty = true;
+      }
+      return hit;
+    }
+
+    setStatus('translating', '번역 중...');
+    try {
+      const translated = await translateVia(text);
+      if (!translated) {
+        dbg.lastErr = '번역 실패 (모든 엔진)';
+        showToast('번역 서버 응답 없음');
+        return '';
+      }
+      transCache.set(key, translated);
+      cacheDirty = true;
+      while (transCache.size > CACHE_MAX) {
+        for (const k of transCache.keys()) {
+          if (!seedKeys.has(k)) { transCache.delete(k); break; }
+        }
+      }
+      return translated;
+    } catch(e) {
+      showToast('번역 오류 - 네트워크 확인');
+      return '';
+    } finally {
+      if (isListening) setStatus('listening', '듣는 중...');
+    }
+  }
+
+  // ── 음성 인식 ──
+  function initRecognition() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { showToast('이 브라우저는 음성인식 미지원 (Chrome 필요)'); return null; }
+
+    const r = new SR();
+    r.lang = 'zh-CN';         // 중국어 인식
+    r.continuous = true;       // 계속 듣기
+    r.interimResults = true;   // 중간 결과도 받기
+    r.maxAlternatives = 1;
+
+    r.onstart = () => {
+      isListening = true;
+      setStatus('listening', '듣는 중...');
+      $btn.classList.add('active');
+      $btn.textContent = '⏹';
+    };
+
+    r.onresult = (e) => {
+      let interim = '';
+      let final = '';
+
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) final += t;
+        else interim += t;
+      }
+
+      // 중간 결과: 원문 표시
+      const current = final || interim;
+      if (current) $orig.textContent = current;
+
+      // 최종 결과: 번역
+      if (final) {
+        lastOriginal = final;
+        clearTimeout(translateTimer);
+        translate(final);
+      } else if (interim) {
+        // 중간결과는 1.5초 멈추면 번역
+        clearTimeout(translateTimer);
+        translateTimer = setTimeout(() => translate(interim), 1500);
+      }
+    };
+
+    r.onerror = (e) => {
+      if (e.error === 'no-speech') return;
+      if (e.error === 'not-allowed') { showToast('마이크 권한을 허용해주세요'); return; }
+      showToast('인식 오류: ' + e.error);
+    };
+
+    r.onend = () => {
+      // 듣기 중이면 자동 재시작
+      if (isListening) {
+        try { r.start(); } catch(e) {}
+      } else {
+        $btn.classList.remove('active');
+        $btn.textContent = '🎤';
+        setStatus('', '준비');
+      }
+    };
+
+    return r;
+  }
+
+  // ══════════════════════════════════════════
+  //  iFlytek 실시간 음성인식 (메인 엔진)
+  //  중국어·사투리에 강하고 중국 내에서 빠름
+  // ══════════════════════════════════════════
+  async function startFlytek() {
+    if (!IFLYTEK_AUTH_PROXY) return fallbackTo('aai', null);
+
+    // 1) 마이크 먼저 확보 (세션 재연결 중에도 계속 유지)
+    if (!(await openMic())) return false;
+
+    isListening = true;
+    $btn.classList.add('active');
+    $btn.textContent = '⏹';
+    setStatus('listening', '듣는 중...');
+
+    // 마이크 상시 개방. 말소리가 감지될 때만 세션을 염
+    // (조용할 때 세션을 붙들고 있으면 동시연결 제한·사용량 낭비)
+    pipeAudio(sendFlytekChunk, true);
+    return true;
+  }
+
+  // 말소리 감지 → 세션이 없으면 열기
+  // flyOpening 은 소켓이 실제로 열리거나 실패할 때까지 유지해야 함
+  // (일찍 풀면 1초 안에 세션이 여러 개 열려 동시연결 제한에 걸림)
+  function onVoiceDetected() {
+    if (flySocket || flyOpening) return;
+    flyOpening = true;
+    voiceAt = performance.now();     // 말이 시작된 시각 (지연 측정 기준)
+    dbg.tRecog = 0; dbg.tTrans = 0;
+    dbg.session = '연결중';
+    // 연결이 매달려 있을 경우를 대비한 안전장치
+    clearTimeout(flyOpenGuard);
+    flyOpenGuard = setTimeout(() => { flyOpening = false; }, 6000);
+    openFlySession(false);
+  }
+
+  // iat는 한 세션당 최대 60초 + 말이 멈추면 자동 종료.
+  // 긴 발화가 끊기지 않도록, 만료 전에 다음 세션을 미리 열어두고 이어붙임.
+  // 토큰을 미리 받아둔다 — 말이 시작된 뒤에 받으면 그만큼 늦어진다
+  let tokenCache = null;
+  async function fetchToken() {
+    const res = await fetch(IFLYTEK_AUTH_PROXY);
+    const data = await res.json();
+    if (!data?.url || !data?.app_id) throw new Error('no url');
+    return { ...data, at: Date.now() };
+  }
+  async function prefetchToken() {
+    try { tokenCache = await fetchToken(); } catch(e) {}
+  }
+  function tokenFresh() {
+    return tokenCache && (Date.now() - tokenCache.at) < 240000;  // 4분
+  }
+
+  async function openFlySession(background) {
+    let wsUrl, appId;
+    const t0 = performance.now();
+    try {
+      // 미리 받아둔 게 있으면 즉시 사용 (왕복 한 번 절약)
+      const tk = tokenFresh() ? tokenCache : await fetchToken();
+      tokenCache = null;
+      wsUrl = tk.url; appId = tk.app_id;
+      prefetchToken();          // 다음 세션용으로 미리 준비
+    } catch(e) {
+      flyOpening = false;
+      if (!background) fallbackTo('aai', '인식 서버 연결 실패');
+      return false;
+    }
+    dbg.tToken = Math.round(performance.now() - t0);
+
+    const sock = new WebSocket(wsUrl);
+    let opened = false;
+    flyAppId = appId;
+
+    sock.onopen = () => {
+      opened = true;
+      flyOpening = false;
+      dbg.tOpen = Math.round(performance.now() - t0);
+      if (background) terminateFlySocket(flySocket);   // 이전 세션 마무리
+      flySocket = sock;
+      flyFirstFrame = true;
+
+      // ★ 새 세션은 인식 결과가 0번부터 다시 시작한다.
+      //   이전 조각을 지우지 않으면 앞부분만 덮이고 뒷부분은 옛것이 남아
+      //   원문이 뒤엉킨다(번역 반복·오역의 원인).
+      flySlices = [];
+      finishedText = '';
+
+      dbg.session = '열림'; dbg.frames = 0; dbg.recv = 0; dbg.lastErr = '-';
+      setStatus('listening', '듣는 중...');
+      scheduleFlyRotate();
+    };
+
+    sock.onmessage = ev => {
+      // 교대로 물러난 이전 세션의 결과는 무시.
+      // (안 그러면 새 세션의 누적 문장을 덮어써서 번역이 깨짐)
+      if (flySocket && sock !== flySocket) return;
+      dbg.recv++;
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.code !== 0) {
+        dbg.lastErr = msg.code + ' ' + (msg.message || '');
+        // 11201 = 무료 콜 소진
+        if (msg.code === 11201) { stopFlytek(); fallbackTo('aai', '무료 사용량 소진'); }
+        // 그 외 오류는 세션을 버리고 다음 발화 때 새로 엶
+        else if (sock === flySocket) { flySocket = null; try { sock.close(1000); } catch {} }
+        return;
+      }
+      handleFlytekResult(msg.data);
+
+      // 서버가 인식 종료를 알리면 즉시 전송 중단 (더 보내면 invalid handle)
+      if (msg.data?.status === 2 && sock === flySocket) {
+        dbg.session = '완료';
+        flySocket = null;
+        flyCarry = new Uint8Array(0);
+        // ★ 여기까지의 음성은 이미 처리됐다. 버퍼를 비우지 않으면
+        //   다음 세션에 같은 음성을 다시 보내 같은 말이 두 번 번역된다.
+        flyPreroll = [];
+        clearTimeout(flyRotate);
+        setTimeout(() => { try { sock.close(1000); } catch {} }, 100);
+        // 말이 계속되고 있으면 곧바로 다음 세션을 연다.
+        // 목소리가 감지될 때까지 기다리면 그 사이 음성이 유실된다.
+        if (isListening && sttMode === 'iflytek' && !flyOpening) {
+          flyOpening = true;
+          voiceAt = performance.now();
+          dbg.session = '연결중';
+          openFlySession(false);
+        }
+      }
+    };
+
+    sock.onerror = () => { flyOpening = false; dbg.lastErr = 'WebSocket 연결 오류'; };
+
+    sock.onclose = (e) => {
+      // 아예 열리지도 못한 경우(인증 실패 등) 플래그 해제
+      if (!opened) {
+        flyOpening = false;
+        dbg.session = '연결실패';
+        dbg.lastErr = '핸드셰이크 실패 (code ' + e.code + ')';
+        return;
+      }
+      dbg.session = '닫힘';
+      if (sock !== flySocket) return;        // 교대로 물러난 이전 세션은 무시
+      flySocket = null;
+      flyCarry = new Uint8Array(0);
+      clearTimeout(flyRotate);
+      // 재연결하지 않음 — 다음 말소리가 감지되면 그때 새 세션을 엶
+    };
+
+    return true;
+  }
+
+  // 60초 만료 전(50초)에 다음 세션을 미리 열어 공백 없이 교대
+  function scheduleFlyRotate() {
+    clearTimeout(flyRotate);
+    flyRotate = setTimeout(() => {
+      if (isListening && sttMode === 'iflytek') openFlySession(true);
+    }, 50000);
+  }
+
+  // 이전 세션에 종료 프레임을 보내 마지막 결과를 받아냄
+  function terminateFlySocket(sock) {
+    if (!sock || sock.readyState !== WebSocket.OPEN) return;
+    try {
+      sock.send(JSON.stringify({
+        data: { status: 2, format: 'audio/L16;rate=16000', encoding: 'raw', audio: '' }
+      }));
+    } catch {}
+    setTimeout(() => { try { sock.close(1000); } catch {} }, 500);
+  }
+
+  // 오디오 청크 → base64 → JSON 프레임 전송
+  function sendFlytekChunk(pcmBuffer) {
+    if (!flySocket || flySocket.readyState !== WebSocket.OPEN) return;
+
+    const bytes = new Uint8Array(pcmBuffer);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    const audio = btoa(bin);
+
+    const frame = {
+      data: {
+        status: flyFirstFrame ? 0 : 1,     // 0=첫프레임, 1=중간
+        format: 'audio/L16;rate=16000',
+        encoding: 'raw',
+        audio,
+      }
+    };
+
+    // 첫 프레임에만 공통/비즈니스 파라미터 포함
+    if (flyFirstFrame) {
+      frame.common = { app_id: flyAppId };
+      frame.business = {
+        language: 'zh_cn',
+        domain: 'iat',        // Short Form ASR
+        accent: 'mandarin',   // 쓰촨 등 방언도 이 엔진이 흡수함
+        dwa: 'wpgs',          // 스트리밍 중간결과 활성화
+        vad_eos: 600,         // 0.6초 침묵 = 한 덩어리 끝.
+                              // 사람은 쉼표 자리에서 자연스럽게 쉬므로,
+                              // 이 값이 곧 "절 단위 분할"이 된다.
+                              // 텍스트를 규칙으로 자르는 것보다 정확하다.
+        ptt: 1,               // 구두점
+      };
+      flyFirstFrame = false;
+    }
+
+    flySocket.send(JSON.stringify(frame));
+    dbg.frames++;
+  }
+
+  // wpgs 스트리밍 결과 조립 (apd=이어붙임, rpl=구간교체)
+  function handleFlytekResult(data) {
+    const r = data?.result;
+    if (!r) return;
+
+    // 이번 조각의 텍스트
+    let piece = '';
+    for (const w of (r.ws || [])) {
+      for (const c of (w.cw || [])) piece += c.w;
+    }
+
+    // ※ 순번(sn)으로 새 세션을 판단하지 않는다.
+    //   wpgs는 앞부분을 고쳐쓸 때도 낮은 순번을 쓰기 때문에
+    //   오판해서 번역을 처음부터 다시 하게 되고 화면이 중복된다.
+    //   새 세션 판단은 소켓이 열릴 때(onopen)에만 한다.
+
+    if (r.pgs === 'rpl' && Array.isArray(r.rg)) {
+      // rg 구간을 잘라내고 교체
+      for (let i = r.rg[0]; i <= r.rg[1]; i++) flySlices[i] = '';
+    }
+    flySlices[r.sn] = piece;
+
+    const text = flySlices.join('').trim();
+    if (!text) return;
+
+    if (!dbg.tRecog && voiceAt) dbg.tRecog = Math.round(performance.now() - voiceAt);
+    dbg.lastText = text;
+    $orig.textContent = text;
+
+    // 화면에는 아직 안 띄우지만, 듣고 있다는 건 알려준다
+    if (!(r.ls || data.status === 2) && isListening) {
+      setStatus('listening', '듣는 중… ' + text.length + '자');
+    }
+
+    const isEnd = r.ls || data.status === 2;
+
+    // 종료 신호가 여러 번 오는 경우가 있다 — 같은 문장이면 무시
+    if (finishedText && finishedText.startsWith(text)) return;
+
+    // ══════════════════════════════════════════
+    //  문장을 쪼개지 않는다.
+    //  중국어는 앞뒤 문맥이 있어야 번역되므로, 도중에 자르면
+    //  어떤 규칙을 써도 뜻이 깨진다.
+    //  대신 "지금 말하는 중인 문장"을 통째로 번역해 그 줄만 교체하고,
+    //  문장이 끝나면 그 줄을 확정해 위로 올린다.
+    // ══════════════════════════════════════════
+    if (isEnd) {
+      finishedText = text;
+      liveSeq++;              // 진행 중이던 미리보기 무효화
+      clearTimeout(flyPending); flyPending = null;
+      translateLive(text);
+      flySlices = [];
+      return;
+    }
+
+    // ── 말하는 중: 미리보기 ──
+    // 확정 줄은 절대 건드리지 않고, 맨 아래 흐린 줄만 갱신한다.
+    // 읽던 글자가 바뀌지 않으므로 계속 떠도 방해되지 않는다.
+    schedulePreview(text);
+  }
+
+  // ══════════════════════════════════════════
+  //  미리보기: 말하는 도중에도 번역이 뜬다
+  //  · 0.45초마다, 그리고 새 글자가 3자 이상 늘었을 때만 보낸다
+  //  · 앞선 미리보기가 아직 안 왔으면 건너뛴다 (밀림 방지)
+  //  · 결과가 늦게 오면 버린다 — 최신 것만 의미가 있다
+  // ══════════════════════════════════════════
+  const PREVIEW_MS = 450;      // 미리보기 갱신 간격
+  const PREVIEW_MIN_GROW = 3;  // 이만큼 늘어야 다시 번역
+  let previewBusy = false;
+  let previewSrc = '';         // 마지막으로 미리보기를 보낸 원문
+
+  function schedulePreview(text) {
+    if (flyPending) return;
+    if (text.length < previewSrc.length + PREVIEW_MIN_GROW) return;
+    flyPending = setTimeout(() => {
+      flyPending = null;
+      runPreview(dbg.lastText || text);
+    }, PREVIEW_MS);
+  }
+
+  function runPreview(text) {
+    if (previewBusy || !text) return;
+    if (finishedText && finishedText.startsWith(text)) return;
+    previewBusy = true;
+    previewSrc = text;
+    const seq = liveSeq;
+    translateCurrent(applyFixes(text.trim()))
+      .then(t => {
+        if (seq !== liveSeq) return;   // 이미 확정됨 — 늦은 미리보기는 버린다
+        if (!t) return;
+        liveText = t;
+        renderLines();
+      })
+      .catch(() => {})
+      .finally(() => { previewBusy = false; });
+  }
+
+  // 한 덩어리가 끝날 때마다 번역해 화면에 확정한다.
+  // 번역은 동시에 보내되(빠르게), 화면에는 말한 순서대로 올린다.
+  // ※ 확정 결과는 절대 버리지 않는다.
+  let commitChain = Promise.resolve();
+  function translateLive(text) {
+    inFlight++;
+    const job = translateCurrent(applyFixes(text.trim()))
+      .catch(() => '')
+      .finally(() => { inFlight--; });
+
+    commitChain = commitChain
+      .then(() => job)
+      .then(t => { if (t) commitLine(t); })
+      .catch(() => {});
+  }
+
+  // ── 화면 표시 ──
+  // 확정된 문장은 위에 고정(밝게)되고, 말하는 중인 문장만 맨 아래에서 흐리게 갱신된다.
+  function renderLines() {
+    const hasAny = lines.length > 0 || !!liveText;
+    $trans.textContent = '';
+    if (lines.length) $trans.append(document.createTextNode(lines.join('\n')));
+    if (liveText) {
+      if (lines.length) $trans.append(document.createTextNode('\n'));
+      const s = document.createElement('span');
+      s.className = 'tail';
+      s.textContent = liveText;
+      $trans.append(s);
+    }
+    if (!hasAny) $trans.textContent = '중국어를 말하면 번역됩니다';
+    $trans.classList.toggle('empty', !hasAny);
+    requestAnimationFrame(() => {
+      const lh = curFontSize() * 1.45;
+      const max = $transWin.scrollHeight - $transWin.clientHeight;
+      $transWin.scrollTop = max > 0 ? Math.round(max / lh) * lh : 0;
+    });
+  }
+
+
+  // 번역 확정 — 화면에 추가한다.
+  // 짧은 쉼(0.6초)마다 끊기므로 조각이 잦다. 계속 이어 말하는 중이면
+  // 같은 줄에 이어붙이고, 충분히 쉬었으면 새 줄에서 시작한다.
+  function commitLine(t) {
+    const now = performance.now();
+    const sameBreath = lines.length > 0 && (now - lastCommitAt) < SAME_LINE_MS;
+
+    if (sameBreath) {
+      const i = lines.length - 1;
+      lines[i] = (lines[i] + ' ' + t).trim();
+    } else {
+      lines.push(t);
+      if (lines.length > MAX_LINES) lines.shift();
+    }
+    lastCommitAt = now;
+    lastTranslated = t;
+    liveText = '';        // 미리보기는 확정 줄로 흡수됐다
+    previewSrc = '';
+    renderLines();
+  }
+
+  // 마지막 구두점 위치 찾기 (그 다음 인덱스 반환)
+  function lastBoundary(s, re) {
+    let idx = -1;
+    for (let i = 0; i < s.length; i++) {
+      if (re.test(s[i])) idx = i;
+    }
+    return idx >= 0 ? idx + 1 : 0;
+  }
+
+
+  function stopFlytek() {
+    isListening = false;
+    clearTimeout(flyReopen);
+    clearTimeout(flyRotate);
+
+    // 종료 프레임 (status=2)
+    if (flySocket && flySocket.readyState === WebSocket.OPEN) {
+      try {
+        flySocket.send(JSON.stringify({
+          data: { status: 2, format: 'audio/L16;rate=16000', encoding: 'raw', audio: '' }
+        }));
+      } catch {}
+    }
+    setTimeout(() => { try { flySocket?.close(1000); } catch {} flySocket = null; }, 300);
+
+    closeMic();
+    flySlices = [];
+    $btn.classList.remove('active');
+    $btn.textContent = '🎤';
+    setStatus('', '준비');
+  }
+
+  // ══════════════════════════════════════════
+  //  AssemblyAI 스트리밍 STT (폴백 1)
+  //  마이크 → PCM 16kHz → WebSocket → 실시간 텍스트
+  // ══════════════════════════════════════════
+  // 엔진 실패 → 다음 순위 엔진으로 자동 전환 후 계속 진행
+  // iflytek → aai → browser
+  function fallbackTo(nextMode, reason) {
+    if (reason) showToast(reason + ' - 엔진 전환');
+    const wasListening = isListening;
+    if (wasListening) stopListen();          // 현재 엔진 정리
+    setSttMode(nextMode);
+    setTimeout(() => { if (!isListening) toggleListen(); }, 400);
+    return false;
+  }
+
+  async function startAAI() {
+    if (!AAI_TOKEN_PROXY) return fallbackTo('browser', null);
+
+    // 1) 임시 토큰 발급 (API 키는 Worker에만 존재)
+    let token;
+    setStatus('translating', '연결 중...');
+    try {
+      const res = await fetch(AAI_TOKEN_PROXY);
+      const data = await res.json();
+      token = data?.token;
+      if (!token) throw new Error('no token');
+    } catch(e) {
+      return fallbackTo('browser', '인식 서버 연결 실패');
+    }
+
+    // 2) 마이크 확보
+    if (!(await openMic())) return false;
+
+    // 3) WebSocket 연결
+    const params = new URLSearchParams({
+      sample_rate: SAMPLE_RATE,
+      speech_model: AAI_MODEL,
+      token,
+    });
+    aaiSocket = new WebSocket(`${AAI_WS}?${params}`);
+    aaiSocket.binaryType = 'arraybuffer';
+
+    aaiSocket.onopen = () => {
+      isListening = true;
+      setStatus('listening', '듣는 중...');
+      $btn.classList.add('active');
+      $btn.textContent = '⏹';
+      pipeAudio(buf => {
+        if (aaiSocket?.readyState === WebSocket.OPEN) aaiSocket.send(buf);
+      });
+    };
+
+    aaiSocket.onmessage = ev => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.type !== 'Turn') return;
+
+      const text = (msg.transcript || '').trim();
+      if (!text) return;
+
+      // 중간 결과: 원문만 갱신
+      $orig.textContent = text;
+
+      // 최종 결과: 번역
+      if (msg.end_of_turn && text.length > 1) {
+        translate(text);
+      }
+    };
+
+    aaiSocket.onerror = () => {};   // onclose 에서 일괄 처리
+
+    aaiSocket.onclose = () => {
+      // 듣는 중에 끊겼다면 무료 엔진으로 자동 폴백
+      if (isListening) {
+        stopAAI();
+        fallbackTo('browser', '세션 종료');
+      }
+    };
+
+    return true;
+  }
+
+  // ══════════════════════════════════════════
+  //  공용 마이크 파이프라인 (두 엔진이 함께 사용)
+  // ══════════════════════════════════════════
+  async function openMic() {
+    try {
+      // echoCancellation만 끔 — 켜두면 스피커에서 나오는 소리를 지워버려
+      // 영상·통화 번역이 아예 안 됨.
+      // autoGainControl은 켜야 함 — 끄면 내장 마이크 입력이 너무 작아짐.
+      // noiseSuppression은 iFlytek이 더 잘 처리하므로 끔.
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: true,
+          channelCount: 1,
+        }
+      });
+      dbg.mic = '정상';
+      return true;
+    } catch(e) {
+      dbg.mic = '권한거부';
+      dbg.lastErr = '마이크 접근 실패: ' + e.name;
+      showToast('마이크 권한을 허용해주세요');
+      setStatus('', '준비');
+      return false;
+    }
+  }
+
+  function closeMic() {
+    clearTimeout(flyPending); flyPending = null;
+    flyCarry = new Uint8Array(0);
+    flyPreroll = [];
+    flyOpening = false;
+    procNode?.disconnect(); srcNode?.disconnect();
+    audioCtx?.close().catch(() => {});
+    procNode = null; srcNode = null; audioCtx = null;
+    mediaStream?.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+  }
+
+  // 마이크 → 16kHz Int16 PCM → onChunk(ArrayBuffer)
+  // extra 가 주어지면(iFlytek) 40ms/1280B 페이싱으로 나눠 보냄
+  function pipeAudio(onChunk, extra) {
+    // Safari 등 일부 브라우저는 sampleRate 지정을 무시하므로,
+    // 실제 샘플레이트를 확인해 필요하면 16kHz로 직접 변환한다.
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SAMPLE_RATE });
+    } catch(e) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    // 자동재생 정책으로 suspended 상태일 수 있으므로 깨움
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {});
+      // 사용자 동작이 있을 때 다시 시도하도록 예약
+      const wake = () => { audioCtx?.resume().catch(() => {}); };
+      document.addEventListener('keydown', wake, { once: true });
+      document.addEventListener('click', wake, { once: true });
+    }
+
+    const actualRate = audioCtx.sampleRate;
+    const needResample = Math.abs(actualRate - SAMPLE_RATE) > 1;
+    dbg.mic = '정상 ' + actualRate + 'Hz' + (needResample ? '→16k' : '');
+
+    srcNode = audioCtx.createMediaStreamSource(mediaStream);
+    procNode = audioCtx.createScriptProcessor(4096, 1, 1);
+
+    const paced = extra !== undefined;
+
+    procNode.onaudioprocess = e => {
+      if (!isListening) return;
+      let input = e.inputBuffer.getChannelData(0);
+
+      // 필요하면 16kHz로 리샘플 (선형 보간)
+      if (needResample) {
+        const ratio = actualRate / SAMPLE_RATE;
+        const outLen = Math.floor(input.length / ratio);
+        const out = new Float32Array(outLen);
+        for (let i = 0; i < outLen; i++) {
+          const pos = i * ratio;
+          const i0 = Math.floor(pos), frac = pos - i0;
+          const a = input[i0] || 0, b = input[i0 + 1] ?? a;
+          out[i] = a + (b - a) * frac;
+        }
+        input = out;
+      }
+
+      // 무음 게이트 판단에 쓰려면 증폭 전에 미리 구해둔다
+      let sumRaw = 0;
+      for (let i = 0; i < input.length; i++) sumRaw += input[i] * input[i];
+      const rmsRaw = Math.sqrt(sumRaw / input.length);
+
+      // ── 자동 증폭 ──
+      // 입력이 작으면 키워서 인식률을 올린다. 최근 최대치를 기준으로
+      // 목표 레벨에 맞추되, 급격한 변화를 막기 위해 서서히 조정.
+      let framePeak = 0;
+      for (let i = 0; i < input.length; i++) {
+        const a = Math.abs(input[i]);
+        if (a > framePeak) framePeak = a;
+      }
+      peakTracker = Math.max(framePeak, peakTracker * 0.995);   // 천천히 감쇠
+      const wantGain = peakTracker > 0.0005
+        ? Math.min(MAX_GAIN, Math.max(1, TARGET_PEAK / peakTracker))
+        : 1;
+      // 줄일 땐 빠르게(음 깨짐 방지), 키울 땐 천천히(잡음 증폭 방지)
+      gain += (wantGain - gain) * (wantGain < gain ? 0.4 : 0.05);
+      dbg.gain = gain;
+
+      // ── 무음 게이트 ──
+      // 말소리가 아닌 구간은 실제 무음으로 바꿔 보낸다.
+      // 안 그러면 세션이 열려 있는 동안 방 안의 미세한 소음까지
+      // 인식 엔진이 억지로 중국어로 만들어낸다.
+      const quiet = paced && dbg.thr > 0 && rmsRaw * gain < dbg.thr * 0.6;
+
+      // Float32 (-1~1) → Int16 PCM (증폭 적용, 클리핑 방지)
+      const pcm = new Int16Array(input.length);
+      if (!quiet) {
+        for (let i = 0; i < input.length; i++) {
+          const s = Math.max(-1, Math.min(1, input[i] * gain));
+          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+      }
+      dbg.quiet = quiet;
+      if (!paced) { onChunk(pcm.buffer); return; }
+
+      // ── 말소리 감지 (음량 기반) ──
+      const rms = rmsRaw * gain;   // 증폭 후 기준으로 판단
+      dbg.rms = rms;
+      if (rms > dbg.peak) dbg.peak = rms;
+
+      // ── 주변 소음 수준 추적 ──
+      // ★ 반드시 "내려갈 땐 빠르게, 올라갈 땐 아주 느리게" 여야 한다.
+      //   말소리를 소음으로 학습하면 기준이 말소리보다 높아져
+      //   음성 감지가 영구히 죽는다.
+      if (noiseFloor === 0) {
+        noiseFloor = rms;
+      } else if (rms < noiseFloor) {
+        noiseFloor = noiseFloor * 0.85 + rms * 0.15;   // 조용해지면 빨리 따라감
+      } else {
+        noiseFloor *= 1.0002;                          // 시끄러워도 거의 안 오름
+      }
+
+      // 소음 대비 3배 이상이면 말소리로 판단.
+      // 상한을 둬서 어떤 경우에도 기준이 말소리를 넘지 못하게 한다.
+      // 배수를 크게 잡으면 기준이 말소리 수준까지 올라가 감지가 늦어진다.
+      // 소음 차단은 최소선(VOICE_FLOOR)과 지속 조건이 담당한다.
+      const threshold = Math.min(
+        Math.max(noiseFloor * 1.8, VOICE_FLOOR),
+        Math.max(dbg.peak * 0.2, VOICE_FLOOR)
+      );
+      dbg.thr = threshold;
+
+      // 순간적인 소음(문 닫힘, 키보드 등)에 세션이 열리면
+      // iFlytek이 잡음을 억지로 중국어로 인식해 헛소리가 쌓인다.
+      // 말소리는 최소 0.7초는 이어지므로 그 조건을 요구한다.
+      if (rms > threshold) {
+        voiceRun++;
+        if (voiceRun >= VOICE_RUN_MIN) { flyQuietSince = 0; onVoiceDetected(); }
+      } else {
+        voiceRun = 0;
+      }
+      dbg.run = voiceRun;
+
+      const incoming = new Uint8Array(pcm.buffer);
+
+      // 세션이 아직 없으면 직전 음성을 잠깐 보관해뒀다가
+      // 세션이 열릴 때 같이 보내 앞부분이 잘리지 않게 함
+      if (!flySocket || flySocket.readyState !== WebSocket.OPEN) {
+        flyPreroll.push(incoming);
+        while (flyPreroll.length > PREROLL_CHUNKS) flyPreroll.shift();
+        return;
+      }
+
+      // 보관해둔 앞부분 먼저 흘려보냄
+      let pending = incoming;
+      if (flyPreroll.length) {
+        const parts = [...flyPreroll, incoming];
+        flyPreroll = [];
+        const total = parts.reduce((n, p) => n + p.length, 0);
+        pending = new Uint8Array(total);
+        let o = 0;
+        for (const p of parts) { pending.set(p, o); o += p.length; }
+      }
+
+      // 규격 프레임 크기(1280B)로 쪼개서 전송
+      const merged = new Uint8Array(flyCarry.length + pending.length);
+      merged.set(flyCarry); merged.set(pending, flyCarry.length);
+      let off = 0;
+      while (merged.length - off >= FLY_FRAME_BYTES) {
+        onChunk(merged.slice(off, off + FLY_FRAME_BYTES).buffer);
+        off += FLY_FRAME_BYTES;
+      }
+      flyCarry = merged.slice(off);
+    };
+
+    srcNode.connect(procNode);
+    procNode.connect(audioCtx.destination);
+  }
+
+  function stopAAI() {
+    isListening = false;
+
+    // 세션 종료 신호 (미전송 시 3시간 과금됨)
+    if (aaiSocket && aaiSocket.readyState === WebSocket.OPEN) {
+      try { aaiSocket.send(JSON.stringify({ type: 'Terminate' })); } catch {}
+    }
+    setTimeout(() => { try { aaiSocket?.close(); } catch {} aaiSocket = null; }, 300);
+
+    closeMic();
+
+    $btn.classList.remove('active');
+    $btn.textContent = '🎤';
+    setStatus('', '준비');
+  }
+
+  // ── 엔진 표시 갱신 ──
+  // 사용자가 직접 바꾸는 게 아니라, 고정밀 실패 시 자동 폴백용
+  function setSttMode(mode) {
+    sttMode = mode;
+    const $pill = document.getElementById('engine-pill');
+    const label = { iflytek: '讯飞', aai: 'AAI', browser: '일반' }[mode] || mode;
+    $pill.textContent = label;
+    $pill.classList.toggle('hq', mode === 'iflytek');
+  }
+
+  // ── 시작/정지 (모드에 따라 분기) ──
+  function stopListen() {
+    if (sttMode === 'iflytek') {
+      stopFlytek();
+    } else if (sttMode === 'aai') {
+      stopAAI();
+    } else {
+      isListening = false;
+      recognition?.stop();
+    }
+  }
+
+  function toggleListen() {
+    if (isListening) { stopListen(); return; }
+
+    if (sttMode === 'iflytek') {
+      startFlytek();
+    } else if (sttMode === 'aai') {
+      startAAI();
+    } else {
+      if (!recognition) recognition = initRecognition();
+      if (!recognition) return;
+      try {
+        recognition.start();
+      } catch(e) {
+        // 이미 실행 중
+      }
+    }
+  }
+
+  // ══════════════════════════════════════════
+  //  자동 시작
+  //  마이크 권한이 이미 허용돼 있으면 앱을 열자마자 듣기 시작.
+  //  (첫 방문 등 권한이 없을 때만 Enter를 한 번 눌러야 함)
+  // ══════════════════════════════════════════
+  async function autoStart() {
+    // 권한 상태 확인이 가능한 브라우저면 미리 확인
+    try {
+      const st = await navigator.permissions?.query({ name: 'microphone' });
+      if (st && st.state === 'denied') {
+        setStatus('', '마이크 권한 필요');
+        return;
+      }
+      if (st && st.state === 'prompt') {
+        setStatus('', '준비');   // 권한 요청은 사용자 동작이 필요
+        return;
+      }
+    } catch(e) {
+      // permissions API 미지원 → 그냥 시도해봄
+    }
+
+    try {
+      await toggleListen();
+    } catch(e) {
+      setStatus('', '준비');
+    }
+  }
+
+  // 화면이 다시 활성화되면(안경에서 앱으로 복귀) 자동으로 재개
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && !isListening) {
+      setTimeout(autoStart, 300);
+    }
+  });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => setTimeout(autoStart, 100));
+  } else {
+    setTimeout(autoStart, 100);
+  }
+
+  // ── 글자 크기 (상/하 스와이프) ──
+  // 안경에서 실제로 보면서 조절할 수 있어야 한다. 밝은 곳에서는 크게,
+  // 정보가 많이 필요할 때는 작게. 고른 값은 기억해 둔다.
+  const FS_MIN = 18, FS_MAX = 32;
+  function curFontSize() {
+    return parseFloat(getComputedStyle(document.documentElement)
+      .getPropertyValue('--fs')) || 24;
+  }
+  function setFontSize(px) {
+    const v = Math.min(FS_MAX, Math.max(FS_MIN, Math.round(px)));
+    document.documentElement.style.setProperty('--fs', v + 'px');
+    try { localStorage.setItem('cn.fs', String(v)); } catch (e) {}
+    toast('글자 ' + v + 'px');
+    renderLines();
+  }
+  try {
+    const saved = parseFloat(localStorage.getItem('cn.fs'));
+    if (saved) document.documentElement.style.setProperty('--fs', saved + 'px');
+  } catch (e) {}
+
+  // ── 뉴럴밴드 (키보드) ──
+  document.addEventListener('keydown', e => {
+    // 위/아래 스와이프 = 글자 크기
+    if (e.key === 'ArrowUp')   { setFontSize(curFontSize() + 2); e.preventDefault(); return; }
+    if (e.key === 'ArrowDown') { setFontSize(curFontSize() - 2); e.preventDefault(); return; }
+    if (e.key === 'Enter' || e.key === ' ') {
+      toggleListen();
+      e.preventDefault();
+    }
+    // D: 진단 패널 켜기/끄기
+    if (e.key === 'd' || e.key === 'D') {
+      $debug.classList.toggle('show');
+      e.preventDefault();
+      return;
+    }
+    // ESC: 초기화
+    if (e.key === 'Escape') {
+      stopListen();
+      $orig.textContent = '';
+      $trans.textContent = '중국어를 말하면 번역됩니다';
+      $trans.classList.add('empty');
+      $prev.textContent = '';
+      lastTranslated = '';
+      lines = []; inFlight = 0; lastCommitAt = 0;
+      liveText = ''; previewSrc = ''; liveSeq++;
+      finishedText = ''; renderLines();
+      hideCurrency();
+      $terms.classList.remove('show');
+      e.preventDefault();
+    }
+  });
+</script>
+</body>
+</html>
