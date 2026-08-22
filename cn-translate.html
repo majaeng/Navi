@@ -1181,13 +1181,13 @@
     //  · language_codes=["zh"]  중국어로 고정 (Universal-3.5 Pro 전용)
     //  · format_turns=true      확정 결과에 구두점을 붙여 준다
     //  · max_turn_silence       이 시간 이상 조용하면 구두점과 무관하게 턴을 끊는다.
-    //    기본 1536ms 인데, 문장이 완결되면 그 전에 알아서 끊긴다.
+    //    기본 1536ms. 문장 사이의 짧은 멈춤도 잡으려고 380ms 로 낮췄다.
     const params = new URLSearchParams({
       sample_rate: SAMPLE_RATE,
       speech_model: AAI_MODEL,
       language_codes: '["zh"]',
       format_turns: 'true',
-      max_turn_silence: '900',
+      max_turn_silence: '380',
       token,
     });
     aaiSocket = new WebSocket(`${AAI_WS}?${params}`);
@@ -1213,6 +1213,17 @@
 
       dbg.lastText = text;
       $orig.textContent = text;
+
+      // 진단: 턴이 언제 어떻게 끊기는지 기록해 둔다 (D키 패널·분석용)
+      try {
+        const log = JSON.parse(localStorage.getItem('aai.turns') || '[]');
+        log.push({ t: Math.round(performance.now()), end: !!msg.end_of_turn,
+                   fmt: msg.turn_is_formatted, len: text.length,
+                   punct: (text.match(/[\u3002\uFF01\uFF1F\uFF0C,.!?]/g) || []).length,
+                   tail: text.slice(-16) });
+        if (log.length > 200) log.splice(0, log.length - 200);
+        localStorage.setItem('aai.turns', JSON.stringify(log));
+      } catch (e) {}
 
       if (!msg.end_of_turn && isListening) {
         setStatus('listening', '듣는 중… ' + text.length + '자');
