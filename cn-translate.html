@@ -1076,24 +1076,30 @@
   //  마지막 줄이 뜬 뒤 한동안 새 말이 없으면 지운다.
   //  ※ 마지막 줄을 읽을 시간은 줘야 하므로 너무 짧게 잡지 않는다.
   // ══════════════════════════════════════════
-  const IDLE_START_MS = 3500;   // 이만큼 조용하면 지우기 시작
-  const FADE_STEP_MS  = 800;    // 그 뒤로는 이 간격마다 한 줄씩
+  //  · 마지막 줄이 뜬 뒤 READ_MS 는 무조건 남겨 둔다 (읽을 시간)
+  //  · 인식기가 소리를 듣고 있는 동안에는 절대 지우지 않는다.
+  //    상대가 말하는 중이면 턴이 안 끝나 새 줄이 안 올라오는데,
+  //    그걸 "조용하다"고 착각해서 지우던 문제가 있었다.
+  const READ_MS       = 7000;   // 마지막 줄이 뜬 뒤 보장되는 시간
+  const QUIET_MS      = 2500;   // 인식기가 이만큼 조용해야 지우기 시작
+  const FADE_STEP_MS  = 1200;   // 그 뒤로는 이 간격마다 한 줄씩
 
+  let lastHeardAt = 0;
   let lastFadeAt = 0;
 
   setInterval(() => {
     if (!lines.length) return;
-    if (pendingLines.length || inFlight > 0) return;   // 아직 올릴 게 남았으면 둔다
+    if (pendingLines.length || inFlight > 0) return;   // 아직 올릴 게 남았다
+    const now = performance.now();
+    if (now - lastHeardAt   < QUIET_MS) return;        // 아직 듣고 있다
+    if (now - lastCommitAt  < READ_MS)  return;        // 읽을 시간을 준다
+    if (now - lastFadeAt    < FADE_STEP_MS) return;
 
-    const idle = performance.now() - lastCommitAt;
-    if (idle < IDLE_START_MS) return;
-    if (performance.now() - lastFadeAt < FADE_STEP_MS) return;
-
-    lines.shift();              // 위에서부터 한 줄씩 (마지막 줄이 가장 오래 남는다)
-    lastFadeAt = performance.now();
+    lines.shift();              // 위에서부터 (마지막 줄이 가장 오래 남는다)
+    lastFadeAt = now;
     if (!lines.length) liveText = '';
     renderLines();
-  }, 300);
+  }, 400);
 
   // ══════════════════════════════════════════
   //  줄 내보내기 속도 조절
@@ -1244,6 +1250,7 @@
 
       dbg.lastText = text;
       $orig.textContent = text;
+      lastHeardAt = performance.now();   // 말하는 중 — 화면을 지우면 안 된다
 
       // 진단: 턴이 언제 어떻게 끊기는지 기록해 둔다 (D키 패널·분석용)
       try {
