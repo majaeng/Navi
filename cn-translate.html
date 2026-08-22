@@ -1076,16 +1076,24 @@
   //  마지막 줄이 뜬 뒤 한동안 새 말이 없으면 지운다.
   //  ※ 마지막 줄을 읽을 시간은 줘야 하므로 너무 짧게 잡지 않는다.
   // ══════════════════════════════════════════
-  const IDLE_CLEAR_MS = 12000;
+  const IDLE_START_MS = 3500;   // 이만큼 조용하면 지우기 시작
+  const FADE_STEP_MS  = 800;    // 그 뒤로는 이 간격마다 한 줄씩
+
+  let lastFadeAt = 0;
 
   setInterval(() => {
     if (!lines.length) return;
     if (pendingLines.length || inFlight > 0) return;   // 아직 올릴 게 남았으면 둔다
-    if (performance.now() - lastCommitAt < IDLE_CLEAR_MS) return;
-    lines = [];
-    liveText = '';
+
+    const idle = performance.now() - lastCommitAt;
+    if (idle < IDLE_START_MS) return;
+    if (performance.now() - lastFadeAt < FADE_STEP_MS) return;
+
+    lines.shift();              // 위에서부터 한 줄씩 (마지막 줄이 가장 오래 남는다)
+    lastFadeAt = performance.now();
+    if (!lines.length) liveText = '';
     renderLines();
-  }, 1000);
+  }, 300);
 
   // ══════════════════════════════════════════
   //  줄 내보내기 속도 조절
