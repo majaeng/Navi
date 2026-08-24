@@ -361,7 +361,8 @@
       // ↓ 폭탄·멈춤 진단용. 턴이 길거나 대기가 쌓이거나 시한초과가 늘면 그게 원인이다.
       `턴길이 <b>${dbg.turnLen || 0}</b>자   대기 <b>${pendingLines.length}</b>줄   ` +
       `번역중 <b>${inFlight}</b>   시한초과 <b>${dbg.timeouts || 0}</b>\n` +
-      `글자판정 <b>${dbg.script || '-'}</b>   끊은이유 <b>${dbg.why || '-'}</b>\n` +
+      `글자판정 <b>${dbg.script || '-'}</b>   끊은이유 <b>${dbg.why || '-'}</b>   ` +
+      `사전적용 <b>${dbg.termHits || 0}</b>회 ${dbg.terms || ''}\n` +
       (function () {
         // ── 지연 내역 ──
         // 어느 단계가 느린지 숫자로 본다. 추측으로 상수를 만지지 않기 위해서다.
@@ -608,6 +609,56 @@
     return out;
   }
 
+  // ══════════════════════════════════════════
+  //  용어 사전을 번역에 실제로 반영한다
+  // ══════════════════════════════════════════
+  //  ★ 예전에는 TERMS 를 화면 옆 힌트로만 띄우고 번역에는 쓰지 않았다.
+  //    그래서 '七日留存' 이 사전에 '7일 잔존율' 로 등록돼 있는데도
+  //    화면에는 '7일간 보류' 가 나왔다.
+  //
+  //  방법: 보내기 전에 중국어 용어를 한국어 표기로 바꿔친다.
+  //    번역 방향이 중국어→한국어라서, 이미 한국어인 부분은
+  //    파파고가 대체로 건드리지 않고 그대로 통과시킨다.
+  //    ※ 긴 용어부터 바꿔야 한다. 짧은 게 먼저 걸리면
+  //      '虚幻引擎' 이 '虚幻' + '엔진' 으로 쪼개진다.
+  //  ※ 동사 뒤에 오는 중국어 조사(了·着·过)까지 함께 남으면
+  //    '反而감소了五个百分点' 처럼 되어 번역기가 문장을 못 읽는다.
+  //    그런 자리는 바꾸지 않고 원문 그대로 둔다.
+  const CN_PARTICLE = '了着过';
+
+  function applyTerms(text) {
+    let out = text;
+    const used = [];
+    for (const k of TERM_KEYS) {
+      if (!out.includes(k)) continue;
+
+      let res = '', i = 0, changed = false;
+      while (i < out.length) {
+        if (out.startsWith(k, i)) {
+          const next = out[i + k.length];
+          if (next && CN_PARTICLE.includes(next)) {
+            res += k; i += k.length;      // 조사가 붙는 자리 — 건드리지 않는다
+            continue;
+          }
+          res += TERMS[k]; i += k.length; changed = true;
+          continue;
+        }
+        res += out[i++];
+      }
+      out = res;
+
+      if (changed) {
+        used.push(k);
+        if (used.length >= 8) break;   // 한 조각에 이보다 많으면 원문이 망가진다
+      }
+    }
+    if (used.length) {
+      dbg.terms = used.join(',');
+      dbg.termHits = (dbg.termHits || 0) + used.length;
+    }
+    return out;
+  }
+
   // 원문에 업계 용어가 있으면 화면에 힌트 표시 (최대 2개)
   function showTerms(text) {
     const hits = [], taken = [];
@@ -648,7 +699,8 @@
 
     setStatus('translating', '번역 중...');
     try {
-      const translated = await translateVia(text);
+      // ※ 캐시 열쇠는 원문(text) 그대로 쓰고, 번역기에는 용어를 바꿔친 것을 보낸다.
+      const translated = await translateVia(applyTerms(text));
       if (!translated) {
         dbg.lastErr = '번역 실패 (모든 엔진)';
         showToast('번역 서버 응답 없음');
