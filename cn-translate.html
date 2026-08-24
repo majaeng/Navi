@@ -393,6 +393,8 @@
       // ↓ 폭탄·멈춤 진단용. 턴이 길거나 대기가 쌓이거나 시한초과가 늘면 그게 원인이다.
       `턴길이 <b>${dbg.turnLen || 0}</b>자   대기 <b>${pendingLines.length}</b>줄   ` +
       `번역중 <b>${inFlight}</b>   시한초과 <b>${dbg.timeouts || 0}</b>\n` +
+      `끊기 말하는중 <b>${dbg.cutPartial || 0}</b> / 문장끝 <b>${dbg.cutFinal || 0}</b>   ` +
+      `중간구두점 <b>${dbg.partPunct || '-'}</b>\n` +
       `글자판정 <b>${dbg.script || '-'}</b>   끊은이유 <b>${dbg.why || '-'}</b>   ` +
       `사전 <b>${TERM_KEYS.length}</b>개 중 <b>${dbg.termHits || 0}</b>회 적용 ${dbg.terms || ''}\n` +
       (function () {
@@ -1618,6 +1620,12 @@
       const piece = tail.slice(0, cut).replace(/^[\s。！？；：，、.!?;:,]+/, '').trim();
       if (!piece) return;
 
+      // ── 진단 ──
+      // 말하는 중(부분)에 끊었는지, 문장이 끝난 뒤(확정)에야 끊었는지.
+      // 확정 쪽만 올라가면 화면은 문장이 끝나야 뜬다 = 늦게 뜬다.
+      if (isFinal) dbg.cutFinal = (dbg.cutFinal || 0) + 1;
+      else         dbg.cutPartial = (dbg.cutPartial || 0) + 1;
+
       // ★ 중국어가 아니면 번역하지 않는다.
       const sc = scriptOf(piece);
       emittedPlain += plainLen(piece);
@@ -1927,6 +1935,11 @@
       // ※ 턴이 닫히기를 기다리지 않는다. 자란 만큼 끊어서 바로 번역한다.
       if (!msg.end_of_turn) {
         dbg.turnLen = text.length;
+        // ★ 중간 결과에 구두점이 실려 오는가?
+        //   안 오면 '쉼표로 끊기' 규칙이 영영 발동하지 않는다.
+        if (text.length > 8) {
+          dbg.partPunct = /[，。！？、；：]/.test(text) ? '있음' : '없음';
+        }
         if (isListening) setStatus('listening', '듣는 중… ' + text.length + '자');
         feedChunks(text, false);
         return;
