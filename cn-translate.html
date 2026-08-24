@@ -212,6 +212,9 @@
   })();
   const LLM_TIMEOUT = 4000;
 
+  // 엔진을 비교할 때는 캐시가 끼면 안 된다. ?nocache=1
+  const NO_CACHE = new URLSearchParams(location.search).has('nocache');
+
   // ── iFlytek 인증 프록시 (메인 엔진) ──
   // ⚠️ 아직 미설정: Worker 만든 뒤 아래 주소를 채우면 활성화됨
   const IFLYTEK_AUTH_PROXY = 'https://iflytek-auth.majaeng.workers.dev';
@@ -372,7 +375,8 @@
     const bar = '█'.repeat(Math.min(20, Math.round(dbg.rms / scale * 20)));
     $debug.innerHTML =
       `엔진 <b>${sttMode}</b> (<b>${AAI_MODE}</b>)   세션 <b>${dbg.session}</b>   마이크 <b>${dbg.mic}</b>\n` +
-      `번역기 <b>${MT_MODE}</b>` +
+      `번역기 <b>${MT_MODE}</b>${NO_CACHE ? ' (캐시끔)' : ''}` +
+      (dbg.fromCache ? ' <b>캐시</b>' : '') +
       (dbg.llmModel ? ` → ${dbg.llmModel} <b>${dbg.llmMs}</b>ms` : '') +
       (llmFails ? `   <span class="err">LLM실패 ${llmFails}회(파파고로 대체)</span>` : '') + '\n' +
       `음량 ${bar || '·'} ${dbg.rms.toFixed(4)} / 기준 ${dbg.thr.toFixed(4)}   증폭 <b>x${dbg.gain.toFixed(1)}</b>\n` +
@@ -774,13 +778,27 @@
     amount ? showCurrency(amount) : hideCurrency();
 
     // 캐시 적중 → 네트워크 없이 즉시 (문장부호·어조사 차이는 무시)
-    const key = normalize(text);
-    const hit = transCache.get(key);
-    if (hit) {
-      if (!seedKeys.has(key)) {
-        transCache.delete(key); transCache.set(key, hit); cacheDirty = true;
+    //
+    // ★ 열쇠에 엔진 이름을 붙인다.
+    //   예전에는 원문만으로 열쇠를 만들어서, 하이쿠로 바꿔도
+    //   파파고 시절에 저장해둔 번역이 그대로 나왔다.
+    //   (실측: 화면 대부분이 '번역 1ms' 로 옛 결과였다)
+    const norm = normalize(text);
+    const key = MT_MODE + '|' + norm;
+
+    // 엔진을 비교할 때는 캐시를 꺼야 한다 (?nocache=1)
+    if (!NO_CACHE) {
+      // 손으로 적어둔 문장은 엔진과 무관하게 그대로 쓴다
+      if (seedKeys.has(norm)) {
+        const seed = transCache.get(norm);
+        if (seed) { dbg.fromCache = true; return seed; }
       }
-      return hit;
+      const hit = transCache.get(key);
+      if (hit) {
+        transCache.delete(key); transCache.set(key, hit); cacheDirty = true;
+        dbg.fromCache = true;
+        return hit;
+      }
     }
 
     setStatus('translating', '번역 중...');
@@ -800,6 +818,7 @@
           if (!seedKeys.has(k)) { transCache.delete(k); break; }
         }
       }
+      dbg.fromCache = false;
       return translated;
     } catch(e) {
       showToast('번역 오류 - 네트워크 확인');
