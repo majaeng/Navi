@@ -192,7 +192,10 @@
 
   // 엔진 우선순위: iflytek → aai → browser (앞이 실패하면 다음으로)
   let sttMode = 'aai';
-  const confLog = [];        // 최근 턴들의 인식 신뢰도 (기준값 정하기 전 실측용)
+  const confLog = [];        // 최근 턴들의 인식 신뢰도 (기준값 조정용)
+  // 중국어가 아닌 말을 걸러내는 기준. 시끄러운 곳에서 진짜 중국어가
+  // 잘리면 낮추고, 엉뚱한 번역이 새어 나오면 올린다.
+  const CONF_MIN = 0.65;
   let flySocket = null;
   let flyFirstFrame = true;
   let flySlices = [];              // wpgs 스트리밍 결과 조각들
@@ -1313,6 +1316,16 @@
       dbg.turnConf = msg.end_of_turn_confidence;
       confLog.push({ conf, turn: msg.end_of_turn_confidence, len: text.length, text: text.slice(0, 24) });
       if (confLog.length > 60) confLog.shift();
+
+      // 신뢰도가 낮으면 중국어가 아닌 말(한국어 등)을 억지로 끼워 맞춘 결과다.
+      //  실측: 중국어 0.908 / 한국어 0.518 → 그 사이에 선을 긋는다.
+      //  ※ 조용히 버리면 고장난 것처럼 보이므로 흐린 표시를 남긴다.
+      if (conf !== null && conf < CONF_MIN) {
+        liveText = '···';
+        renderLines();
+        setTimeout(() => { if (liveText === '···') { liveText = ''; renderLines(); } }, 1500);
+        return;
+      }
 
       translateLive(text);   // 통째로 번역 → 결과를 잘라서 표시
     };
