@@ -184,6 +184,15 @@
   const AAI_TOKEN_PROXY = 'https://aai-token.majaeng.workers.dev';
   const AAI_WS = 'wss://streaming.assemblyai.com/v3/ws';
   const AAI_MODEL = 'universal-3-5-pro';   // 중국어(Mandarin) 지원 모델
+
+  // 인식 모드. 주소 뒤 ?mode=... 로 바꿔가며 비교할 수 있게 해둔다.
+  //  min_latency  = 가장 빠르지만 부정확 (예전 설정)
+  //  balanced     = 기본값
+  //  max_accuracy = 가장 정확하지만 느리다
+  const AAI_MODE = (function () {
+    const m = new URLSearchParams(location.search).get('mode');
+    return ['min_latency', 'balanced', 'max_accuracy'].includes(m) ? m : 'balanced';
+  })();
   const SAMPLE_RATE = 16000;
 
   // ── iFlytek 인증 프록시 (메인 엔진) ──
@@ -345,7 +354,7 @@
     const scale = Math.max(dbg.peak, 0.02);
     const bar = '█'.repeat(Math.min(20, Math.round(dbg.rms / scale * 20)));
     $debug.innerHTML =
-      `엔진 <b>${sttMode}</b>   세션 <b>${dbg.session}</b>   마이크 <b>${dbg.mic}</b>\n` +
+      `엔진 <b>${sttMode}</b> (<b>${AAI_MODE}</b>)   세션 <b>${dbg.session}</b>   마이크 <b>${dbg.mic}</b>\n` +
       `음량 ${bar || '·'} ${dbg.rms.toFixed(4)} / 기준 ${dbg.thr.toFixed(4)}   증폭 <b>x${dbg.gain.toFixed(1)}</b>\n` +
       `보낸프레임 <b>${dbg.frames}</b>   받은응답 <b>${dbg.recv}</b>\n` +
       `지연  연결 <b>${dbg.tOpen}</b>ms  인식 <b>${dbg.tRecog}</b>ms  번역 <b>${dbg.tTrans}</b>ms\n` +
@@ -1444,23 +1453,26 @@
     if (!(await openMic())) return false;
 
     // 3) WebSocket 연결
-    //  · language_codes=["zh"]  중국어로 고정
-    //  · format_turns=true      확정 결과에 구두점을 붙여 준다
-    //  · mode=min_latency       가장 빨리 내놓는 설정
     //
-    //  턴 종료는 침묵이 아니라 "말이 끝났는지"를 모델이 판단한다.
-    //  다만 판단이 발동하려면 최소한의 멈춤이 필요하다(min_turn_silence).
-    //  문장 사이의 짧은 멈춤도 잡으려고 공식 문서의 '적극적' 설정을 쓴다.
+    //  ★ 정확도 우선으로 돌렸다.
+    //    예전에는 mode=min_latency 에 침묵 판정을 160ms 까지 조여놨다.
+    //    폭탄 출력을 막으려고 그렇게 맞춘 것인데, 그 대가를 인식 정확도로
+    //    치르고 있었다 (한국어를 베트남어로 받아쓴 것이 그 증상이다).
+    //
+    //    이제 문장을 끊는 일은 우리가 직접 한다(feedChunks). 인식기의
+    //    턴 경계에 기대지 않으므로, 침묵 설정을 조일 이유가 사라졌다.
+    //    오히려 넉넉히 줘야 모델이 앞뒤를 더 보고 정확하게 받아쓴다.
     const params = new URLSearchParams({
       sample_rate: SAMPLE_RATE,
       speech_model: AAI_MODEL,
       language_codes: '["zh","ja"]',   // 중국어를 기대하되 하나로 못박지 않는다
       language_detection: 'true',      // 턴마다 감지된 언어를 돌려받는다
       format_turns: 'true',
-      mode: 'min_latency',
-      end_of_turn_confidence_threshold: '0.4',
-      min_turn_silence: '160',    // 이만큼 쉬면 "문장 끝인가" 판단이 돌아간다
-      max_turn_silence: '400',    // 판단이 안 서도 이만큼 조용하면 강제 종료
+      // 주소 뒤에 ?mode=max_accuracy / ?mode=min_latency 로 즉시 비교할 수 있다.
+      mode: AAI_MODE,
+      end_of_turn_confidence_threshold: '0.5',
+      min_turn_silence: '400',    // 조이지 않는다 — 화면 속도는 우리가 끊어서 낸다
+      max_turn_silence: '1200',
       token,
     });
     aaiSocket = new WebSocket(`${AAI_WS}?${params}`);
