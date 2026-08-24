@@ -956,7 +956,7 @@
       // 구두점 기준으로 문장을 나눈다.
       // ※ 예전엔 규칙(어절·조사)으로 추측하다 단어 중간을 잘라 뜻이 깨졌다.
       //   최종 결과에는 인식 모델이 찍은 구두점이 있으므로 그걸 그대로 쓴다.
-      for (const sent of splitSentences(text)) translateLive(sent);
+      translateLive(text);   // 통째로 번역 → 결과를 잘라서 표시
 
       flySlices = [];
       return;
@@ -1028,6 +1028,38 @@
       .finally(() => { previewBusy = false; });
   }
 
+  // ══════════════════════════════════════════
+  //  번역 결과를 표시 단위로 쪼갠다
+  //  ※ 중국어 원문을 자르면 문맥이 끊겨 번역이 나빠진다.
+  //    그래서 번역은 통째로 하고, 나온 한국어만 여기서 나눈다.
+  //  · 마침표·물음표·느낌표에서는 항상 끊는다
+  //  · 쉼표는 앞 조각이 충분히 길 때만 끊는다 (조각이 너무 잘게 나면 읽기 나쁘다)
+  //  · 남은 꼬리가 너무 짧으면 앞 줄에 붙인다
+  // ══════════════════════════════════════════
+  const COMMA_MIN = 14;   // 쉼표로 끊으려면 이 글자 수는 넘어야 한다
+  const TAIL_MIN  = 6;    // 이보다 짧은 꼬리는 앞 줄에 붙인다
+
+  function splitKorean(t) {
+    const out = [];
+    let buf = '';
+    for (const ch of t) {
+      buf += ch;
+      const isEnd   = '.!?\u2026'.includes(ch);
+      const isComma = ',\u3001'.includes(ch);
+      if (isEnd || (isComma && buf.trim().length >= COMMA_MIN)) {
+        const piece = buf.trim();
+        if (piece) out.push(piece);
+        buf = '';
+      }
+    }
+    const rest = buf.trim();
+    if (rest) {
+      if (out.length && rest.length < TAIL_MIN) out[out.length - 1] += ' ' + rest;
+      else out.push(rest);
+    }
+    return out.length ? out : [t.trim()];
+  }
+
   // 한 덩어리가 끝날 때마다 번역해 화면에 확정한다.
   // 번역은 동시에 보내되(빠르게), 화면에는 말한 순서대로 올린다.
   // ※ 확정 결과는 절대 버리지 않는다.
@@ -1040,7 +1072,7 @@
 
     commitChain = commitChain
       .then(() => job)
-      .then(t => { if (t) queueLine(t); })
+      .then(t => { if (t) for (const line of splitKorean(t)) queueLine(line); })
       .catch(() => {});
   }
 
@@ -1108,7 +1140,7 @@
   //  번역은 그대로 동시에 하되, 화면에는 한 줄씩 간격을 두고 올린다.
   //  ※ 밀리기 시작하면 간격을 좁혀 따라잡는다.
   // ══════════════════════════════════════════
-  const LINE_GAP_MS = 700;     // 줄 사이 기본 간격
+  const LINE_GAP_MS = 550;     // 줄 사이 기본 간격
   const LINE_GAP_FAST = 260;   // 밀렸을 때 간격
   let pendingLines = [];
   let revealTimer = null;
@@ -1252,16 +1284,6 @@
       $orig.textContent = text;
       lastHeardAt = performance.now();   // 말하는 중 — 화면을 지우면 안 된다
 
-      // 진단: 턴이 언제 어떻게 끊기는지 기록해 둔다 (D키 패널·분석용)
-      try {
-        const log = JSON.parse(localStorage.getItem('aai.turns') || '[]');
-        log.push({ t: Math.round(performance.now()), end: !!msg.end_of_turn,
-                   fmt: msg.turn_is_formatted, len: text.length,
-                   punct: (text.match(/[\u3002\uFF01\uFF1F\uFF0C,.!?]/g) || []).length,
-                   tail: text.slice(-16) });
-        if (log.length > 200) log.splice(0, log.length - 200);
-        localStorage.setItem('aai.turns', JSON.stringify(log));
-      } catch (e) {}
 
       if (!msg.end_of_turn && isListening) {
         setStatus('listening', '듣는 중… ' + text.length + '자');
@@ -1276,7 +1298,7 @@
       aaiDone = text;
 
       if (!dbg.tRecog && voiceAt) dbg.tRecog = Math.round(performance.now() - voiceAt);
-      for (const sent of splitSentences(text)) translateLive(sent);
+      translateLive(text);   // 통째로 번역 → 결과를 잘라서 표시
     };
 
     aaiSocket.onerror = () => {};   // onclose 에서 일괄 처리
