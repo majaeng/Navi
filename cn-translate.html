@@ -394,8 +394,11 @@
       `턴길이 <b>${dbg.turnLen || 0}</b>자   대기 <b>${pendingLines.length}</b>줄   ` +
       `번역중 <b>${inFlight}</b>   시한초과 <b>${dbg.timeouts || 0}</b>\n` +
       // ★ 첫 줄이 뜨기까지의 내역. 말이 시작된 순간이 0 이다.
+      // ※ 캐시로 나온 줄은 번역 단계가 없다. 그때 음수가 찍히지 않게 나눠 쓴다.
       (uttT4 ? `첫줄내역  말→인식 <b>${Math.round(uttT1)}</b>  →끊기 <b>${Math.round(uttT2 - uttT1)}</b>  ` +
-               `→첫글자 <b>${Math.round(uttT3 - uttT2)}</b>  →표시 <b>${Math.round(uttT4 - uttT3)}</b>  ` +
+               (uttT3
+                 ? `→첫글자 <b>${Math.round(uttT3 - uttT2)}</b>  →표시 <b>${Math.round(uttT4 - uttT3)}</b>  `
+                 : `→표시 <b>${Math.round(uttT4 - uttT2)}</b> (캐시)  `) +
                `= <b>${Math.round(uttT4)}</b>ms\n` : '') +
       `끊기 말하는중 <b>${dbg.cutPartial || 0}</b> / 문장끝 <b>${dbg.cutFinal || 0}</b>   ` +
       `중간구두점 <b>${dbg.partPunct || '-'}</b>\n` +
