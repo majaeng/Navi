@@ -1113,10 +1113,16 @@
   //  · 구두점이 없어도 일정 길이가 쌓이면 끊는다
   //  · 맨 끝 몇 글자는 아직 고쳐질 수 있으니 남겨둔다
   //  · 이미 내보낸 만큼은 다시 번역하지 않는다
-  const CHUNK_PUNCT = /[。！？；：，、.!?;:,]/;
-  const CHUNK_MIN   = 10;   // 구두점이 있어도 이보다 짧으면 안 끊는다
-  const CHUNK_FORCE = 22;   // 구두점이 없어도 이만큼이면 끊는다
+  //  ※ 조각이 짧으면 번역 품질이 무너진다. 파파고는 조각 하나만 보고
+  //    번역하므로 맥락이 없다. 그래서 "문장"을 모아서 보내는 것이 원칙이고,
+  //    쉼표나 멈춤은 문장이 너무 길어질 때만 쓰는 보조 수단이다.
+  const SENT_PUNCT  = /[。！？.!?]/;      // 마침표급 — 문장이 끝났다
+  const COMMA_PUNCT = /[，、；：,;:]/;    // 쉼표급 — 아직 문장 중간이다
+  const SENT_MIN    = 8;    // 마침표라도 이보다 짧으면 안 끊는다
+  const CHUNK_MIN   = 16;   // 쉼표·멈춤으로 끊으려면 이만큼은 모여야 한다
+  const CHUNK_FORCE = 40;   // 쉬지도 않고 구두점도 없으면 이 길이에서 끊는다
   const CHUNK_LAG   = 5;    // 인식기가 고칠 여유로 남겨두는 글자 수
+  const PAUSE_MS    = 500;  // 이만큼 조용하면 문장이 끊긴 것으로 본다
 
   const NOT_PLAIN = /[\s。！？；：，、.!?;:,]/;
 
@@ -1182,24 +1188,45 @@
       const limit = isFinal ? tail.length : tail.length - CHUNK_LAG;
       if (limit <= 0) return;
 
+      // ── 어디서 끊을지 ──
+      // ※ 짧게 끊으면 안 된다. 파파고는 앞뒤 맥락을 못 보므로
+      //   토막을 주면 토막 번역이 나온다. 되도록 한 문장을 모아서 보낸다.
       let cut = -1;
+
+      // 1) 마침표급 구두점 — 문장이 끝났으니 바로 끊는다
       for (let i = 0; i < limit; i++) {
-        if (CHUNK_PUNCT.test(tail[i]) && plainLen(tail.slice(0, i + 1)) >= CHUNK_MIN) {
+        if (SENT_PUNCT.test(tail[i]) && plainLen(tail.slice(0, i + 1)) >= SENT_MIN) {
           cut = i + 1;
           break;
         }
       }
+      // 2) 쉼표급 구두점 — 충분히 길 때만 끊는다
       if (cut < 0) {
-        const n = plainLen(tail.slice(0, limit));
-        // 구두점이 없으면 — 말이 멈춘 순간에 끊는다.
-        // 글자 수만으로 끊으면 "工/厂" 처럼 낱말이 갈라져 번역이 망가진다.
-        const paused = dbg.quiet && (performance.now() - lastVoiceAt) > 180;
-        if (n >= CHUNK_MIN && paused) cut = limit;
-        else if (n >= CHUNK_FORCE) cut = limit;   // 쉬지 않고 계속 말하는 경우
-        else return;
+        for (let i = 0; i < limit; i++) {
+          if (COMMA_PUNCT.test(tail[i]) && plainLen(tail.slice(0, i + 1)) >= CHUNK_MIN) {
+            cut = i + 1;
+            break;
+          }
+        }
+      }
+      // 3) 구두점이 없으면 — 말을 확실히 쉰 지점에서 끊는다
+      if (cut < 0) {
+        const paused = dbg.quiet && (performance.now() - lastVoiceAt) > PAUSE_MS;
+        if (paused) {
+          // ★ 조용해졌으면 인식기는 더 고치지 않는다. 그러니 꼬리를 남기지 않고
+          //   들은 데까지 전부 쓴다. 여기서 CHUNK_LAG 를 적용하면
+          //   "准备 / 好资料" 처럼 낱말 중간이 갈려 번역이 망가진다.
+          if (plainLen(tail) < CHUNK_MIN) return;
+          cut = tail.length;
+        } else if (plainLen(tail.slice(0, limit)) >= CHUNK_FORCE) {
+          cut = limit;                            // 쉬지 않고 계속 말하는 경우
+        } else {
+          return;
+        }
       }
 
-      const piece = tail.slice(0, cut).trim();
+      // 앞 조각에서 넘어온 구두점으로 시작하면 떼어낸다 ("，下午…" → "下午…")
+      const piece = tail.slice(0, cut).replace(/^[\s。！？；：，、.!?;:,]+/, '').trim();
       if (!piece) return;
 
       // ★ 중국어가 아니면 번역하지 않는다.
