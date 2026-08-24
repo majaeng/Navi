@@ -108,12 +108,15 @@
     /* ── 하단: 환율 (테두리 없이 텍스트만) ── */
     .currency {
       position: absolute; bottom: var(--safe); left: var(--safe);
-      display: none; align-items: baseline; gap: 10px;
+      display: none; flex-direction: column; gap: 2px;
     }
     .currency.show { display: flex; }
+    .currency-row { display: flex; align-items: baseline; gap: 8px; }
+    /* 지난 금액은 흐리게 — 지금 말하는 금액이 어느 것인지 구분되게 한다 */
+    .currency-row.old { opacity: 0.45; }
     /* 위안 쪽도 읽을 수 있어야 한다. 어느 금액인지 여기서 가려내기 때문이다. */
-    .currency-cny { font-size: 21px; color: rgba(255,201,90,0.78); }
-    .currency-krw { font-size: 25px; font-weight: 600; color: var(--money); }
+    .currency-cny { font-size: 19px; color: rgba(255,201,90,0.78); }
+    .currency-krw { font-size: 23px; font-weight: 600; color: var(--money); }
 
     /* 진단 패널 (D키) — 기본 숨김 */
     .debug {
@@ -164,11 +167,8 @@
     <span id="original-text"></span>
   </div>
 
-  <!-- 환율 -->
-  <div class="currency" id="currency-badge">
-    <span class="currency-cny" id="currency-cny"></span>
-    <span class="currency-krw" id="currency-krw"></span>
-  </div>
+  <!-- 환율 (최근 금액을 아래에서 위로 쌓는다) -->
+  <div class="currency" id="currency-badge"></div>
 
   <div class="debug" id="debug"></div>
   <div class="toast" id="toast"></div>
@@ -322,6 +322,21 @@
     return result + cur + tmp;
   }
 
+  /// 한 조각에 들어 있는 금액을 전부 찾는다.
+  //  ※ 하나만 찾으면 "원가 3만6천, 운송비 8천" 같은 말에서 뒤엣것을 놓친다.
+  function detectAmounts(text) {
+    const out = [];
+    const re = /(\d+(?:\.\d+)?|[零一二三四五六七八九两十百千万亿]+)\s*(?:块钱|元钱|人民币|块|元)/g;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const raw = m[1];
+      const val = /^[\d.]+$/.test(raw) ? parseFloat(raw) : parseChinese(raw);
+      if (val > 0 && out.indexOf(val) < 0) out.push(val);
+      if (out.length >= 4) break;
+    }
+    return out;
+  }
+
   function detectAmount(text) {
     // 아라비아 숫자 + 위안 단위
     const arabicMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:块|元|人民币|块钱|元钱)/);
@@ -354,16 +369,67 @@
     return `${n.toLocaleString()}위안`;
   }
 
-  function showCurrency(cny) {
-    if (!cnyToKrw || !cny) { hideCurrency(); return; }
-    const krw = Math.round(cny * cnyToKrw);
-    document.getElementById('currency-cny').textContent = `${cnyText(cny)} =`;
-    document.getElementById('currency-krw').textContent = `${krw.toLocaleString()}원`;
-    document.getElementById('currency-badge').classList.add('show');
+  // ══════════════════════════════════════════
+  //  금액 표시
+  // ══════════════════════════════════════════
+  //  예전 방식의 문제 세 가지를 고쳤다.
+  //   1) 조각이 '번역에 들어갈 때' 띄워서, 화면의 글자보다 1.2초 앞서갔다.
+  //      → 그 줄이 실제로 화면에 오를 때 띄운다.
+  //   2) 다음 조각에 금액이 없으면 즉시 지워서, 읽기 전에 사라졌다.
+  //      → 최소 시간 동안 남긴다.
+  //   3) 금액이 연달아 나오면 앞의 것이 덮였다.
+  //      ("원가 3만6천, 운송비 8천, 합계 4만4천" 이면 마지막만 남았다)
+  //      → 최근 세 개까지 쌓아서 보여준다.
+  const MONEY_HOLD_MS = 8000;   // 이 시간은 지우지 않는다
+  const MONEY_MAX     = 3;      // 동시에 보여줄 개수
+  let moneyList = [];           // [{ cny, at }]
+
+  const $money = document.getElementById('currency-badge');
+
+  function pushMoney(list) {
+    if (!cnyToKrw || !list || !list.length) return;
+    const now = performance.now();
+    for (const v of list) {
+      if (!v) continue;
+      const dup = moneyList.find(m => m.cny === v);
+      if (dup) { dup.at = now; continue; }   // 같은 금액이면 시간만 늘린다
+      moneyList.push({ cny: v, at: now });
+    }
+    while (moneyList.length > MONEY_MAX) moneyList.shift();
+    renderMoney();
   }
 
+  function renderMoney() {
+    $money.textContent = '';
+    if (!moneyList.length) { $money.classList.remove('show'); return; }
+    const last = moneyList.length - 1;
+    moneyList.forEach((m, i) => {
+      const row = document.createElement('div');
+      row.className = 'currency-row' + (i < last ? ' old' : '');
+      const a = document.createElement('span');
+      a.className = 'currency-cny';
+      a.textContent = `${cnyText(m.cny)} =`;
+      const b = document.createElement('span');
+      b.className = 'currency-krw';
+      b.textContent = `${Math.round(m.cny * cnyToKrw).toLocaleString()}원`;
+      row.append(a, b);
+      $money.append(row);
+    });
+    $money.classList.add('show');
+  }
+
+  // 오래된 금액을 걷어낸다
+  setInterval(() => {
+    if (!moneyList.length) return;
+    const now = performance.now();
+    const before = moneyList.length;
+    moneyList = moneyList.filter(m => now - m.at < MONEY_HOLD_MS);
+    if (moneyList.length !== before) renderMoney();
+  }, 500);
+
   function hideCurrency() {
-    document.getElementById('currency-badge').classList.remove('show');
+    moneyList = [];
+    renderMoney();
   }
 
   // ── UI 참조 ──
@@ -908,8 +974,8 @@
     if (!text) return '';
     showTerms(text);
 
-    const amount = detectAmount(text);
-    amount ? showCurrency(amount) : hideCurrency();
+    // ※ 금액은 여기서 띄우지 않는다. 번역이 아직 1.2초 남았기 때문에
+    //   여기서 띄우면 화면의 글자보다 앞서간다. 줄이 화면에 오를 때 띄운다.
 
     // 캐시 적중 → 네트워크 없이 즉시 (문장부호·어조사 차이는 무시)
     //
@@ -1770,8 +1836,10 @@
     //  · 번역 = 번역 서버 왕복
     //  · 줄서기 = 앞 조각의 번역을 기다린 시간
     //  · 표시 = 읽기 편하라고 일부러 늦춘 시간
+    // 금액은 중국어 원문에서 뽑는다. (번역이 단위를 잘못 옮겨도 숫자는 안전하다)
+    // 화면에 그 줄이 오를 때 함께 띄우려고 여기에 달아둔다.
     const mark = { why: why || '-', zh: text, ko: '', wait: Math.round(waited || 0),
-                   trans: 0, queue: 0, hold: 0 };
+                   trans: 0, queue: 0, hold: 0, money: detectAmounts(text) };
     pairLog.push(mark);
     if (pairLog.length > 40) pairLog.shift();
 
@@ -1894,6 +1962,12 @@
         // 줄 세우느라 붙잡고 있던 시간 — 순수한 낭비이므로 따로 센다
         if (item.mark) item.mark.hold = Math.round(performance.now() - item.at);
         commitLine(item.text);
+        // ★ 글자가 화면에 오르는 바로 이 순간에 금액을 띄운다.
+        //   (한 조각이 여러 줄로 나뉘어도 한 번만)
+        if (item.mark && item.mark.money && item.mark.money.length) {
+          pushMoney(item.mark.money);
+          item.mark.money = null;
+        }
       }
       pumpReveal();
     }, wait);
