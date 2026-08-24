@@ -1458,24 +1458,10 @@
       gain += (wantGain - gain) * (wantGain < gain ? 0.4 : 0.05);
       dbg.gain = gain;
 
-      // ── 무음 게이트 ──
-      // 말소리가 아닌 구간은 실제 무음으로 바꿔 보낸다.
-      // 안 그러면 세션이 열려 있는 동안 방 안의 미세한 소음까지
-      // 인식 엔진이 억지로 중국어로 만들어낸다.
-      const quiet = paced && dbg.thr > 0 && rmsRaw * gain < dbg.thr * 0.6;
-
-      // Float32 (-1~1) → Int16 PCM (증폭 적용, 클리핑 방지)
-      const pcm = new Int16Array(input.length);
-      if (!quiet) {
-        for (let i = 0; i < input.length; i++) {
-          const s = Math.max(-1, Math.min(1, input[i] * gain));
-          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-      }
-      dbg.quiet = quiet;
-      if (!paced) { onChunk(pcm.buffer); return; }
-
       // ── 말소리 감지 (음량 기반) ──
+      // ※ 이 계산은 어느 엔진을 쓰든 먼저 해야 한다.
+      //   예전에는 무음 게이트 아래에 있어서, AssemblyAI 경로가 위에서
+      //   먼저 return 해버리는 바람에 기준값(dbg.thr)이 0으로 남았다.
       const rms = rmsRaw * gain;   // 증폭 후 기준으로 판단
       dbg.rms = rms;
       if (rms > dbg.peak) dbg.peak = rms;
@@ -1492,15 +1478,34 @@
         noiseFloor *= 1.0002;                          // 시끄러워도 거의 안 오름
       }
 
-      // 소음 대비 3배 이상이면 말소리로 판단.
+      // 소음 대비 조금이라도 크면 말소리로 판단.
       // 상한을 둬서 어떤 경우에도 기준이 말소리를 넘지 못하게 한다.
-      // 배수를 크게 잡으면 기준이 말소리 수준까지 올라가 감지가 늦어진다.
-      // 소음 차단은 최소선(VOICE_FLOOR)과 지속 조건이 담당한다.
       const threshold = Math.min(
         Math.max(noiseFloor * 1.8, VOICE_FLOOR),
         Math.max(dbg.peak * 0.2, VOICE_FLOOR)
       );
       dbg.thr = threshold;
+
+      // ── 무음 게이트 ──
+      // 말소리가 아닌 구간은 진짜 무음(0)으로 바꿔 보낸다.
+      //
+      // ★ 엔진 종류와 무관하게 적용해야 한다.
+      //   예전에는 iFlytek 경로에만 걸려 있었다. 그래서 AssemblyAI 로 보낼 때는
+      //   조용한 구간까지 최대 12배로 증폭해 계속 흘려보냈고, 서버는 침묵을
+      //   본 적이 없어 턴을 닫지 않았다. 한 덩어리가 수백 자로 불어난 원인이다.
+      //   (min_turn_silence 를 160ms 로 낮춰도 소용없었던 이유가 이것)
+      const quiet = dbg.thr > 0 && rms < dbg.thr * 0.6;
+
+      // Float32 (-1~1) → Int16 PCM (증폭 적용, 클리핑 방지)
+      const pcm = new Int16Array(input.length);
+      if (!quiet) {
+        for (let i = 0; i < input.length; i++) {
+          const s = Math.max(-1, Math.min(1, input[i] * gain));
+          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+      }
+      dbg.quiet = quiet;
+      if (!paced) { onChunk(pcm.buffer); return; }
 
       // 순간적인 소음(문 닫힘, 키보드 등)에 세션이 열리면
       // iFlytek이 잡음을 억지로 중국어로 인식해 헛소리가 쌓인다.
