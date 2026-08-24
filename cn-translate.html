@@ -383,7 +383,9 @@
       `엔진 <b>${sttMode}</b> (<b>${AAI_MODE}</b>)   세션 <b>${dbg.session}</b>   마이크 <b>${dbg.mic}</b>\n` +
       `번역기 <b>${MT_MODE}</b>${NO_CACHE ? ' (캐시끔)' : ''}` +
       (dbg.fromCache ? ' <b>캐시</b>' : '') +
+      (USE_STREAM ? ' <b>흐름</b>' : '') +
       (dbg.llmModel ? ` → ${dbg.llmModel} <b>${dbg.llmMs}</b>ms` : '') +
+      (dbg.llmFirstMs ? ` (첫글자 <b>${dbg.llmFirstMs}</b>ms)` : '') +
       (llmFails ? `   <span class="err">LLM실패 ${llmFails}회(파파고로 대체)</span>` : '') + '\n' +
       `음량 ${bar || '·'} ${dbg.rms.toFixed(4)} / 기준 ${dbg.thr.toFixed(4)}   증폭 <b>x${dbg.gain.toFixed(1)}</b>\n` +
       `보낸프레임 <b>${dbg.frames}</b>   받은응답 <b>${dbg.recv}</b>\n` +
@@ -626,6 +628,84 @@
     return hits;
   }
 
+  // ══════════════════════════════════════════
+  //  스트리밍 번역
+  // ══════════════════════════════════════════
+  //  번역이 다 끝나기를 기다리지 않고, 만들어지는 대로 받아서 보여준다.
+  //  ※ 이미 화면에 나온 글자는 바뀌지 않는다. 뒤에 붙기만 한다.
+  //  끄려면 주소에 ?nostream 을 붙인다.
+  const USE_STREAM = !new URLSearchParams(location.search).has('nostream');
+  const FIRST_BYTE_MS = 4000;    // 첫 글자가 이 안에 안 오면 포기
+  const STREAM_MAX_MS = 12000;   // 전체 상한
+
+  function cleanOut(s) {
+    return (s || '').trim()
+      .replace(/^["'「『]|["'」』]$/g, '')
+      .replace(/^(번역|한국어)\s*[:：]\s*/, '')
+      .trim();
+  }
+
+  async function llmTranslateStream(text, onDelta) {
+    const ctl = new AbortController();
+    let firstTimer = setTimeout(() => ctl.abort(), FIRST_BYTE_MS);
+    const hardTimer = setTimeout(() => ctl.abort(), STREAM_MAX_MS);
+    const t0 = performance.now();
+    try {
+      const res = await fetch(LLM_PROXY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text, model: MT_MODE, stream: true,
+          ctx: mtCtx.slice(-MT_CTX_MAX),
+          terms: matchTerms(text),
+        }),
+        signal: ctl.signal,
+      });
+      if (!res.ok || !res.body) throw new Error('스트리밍 응답 없음 ' + res.status);
+
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '', out = '';
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line.startsWith('data:')) continue;
+          const p = line.slice(5).trim();
+          if (!p || p === '[DONE]') continue;
+          let d = '';
+          try { d = JSON.parse(p)?.choices?.[0]?.delta?.content || ''; } catch (e) { continue; }
+          if (!d) continue;
+          if (firstTimer) {
+            // 첫 글자가 왔다 — 여기서부터는 전체 상한만 적용한다
+            clearTimeout(firstTimer); firstTimer = null;
+            dbg.llmFirstMs = Math.round(performance.now() - t0);
+          }
+          out += d;
+          onDelta(cleanOut(out));
+        }
+      }
+
+      const final = cleanOut(out);
+      if (final) {
+        dbg.llmModel = res.headers.get('X-Model') || MT_MODE;
+        dbg.llmMs = Math.round(performance.now() - t0);
+        mtCtx.push(`${text} → ${final}`);
+        while (mtCtx.length > MT_CTX_MAX) mtCtx.shift();
+      }
+      return final;
+    } finally {
+      if (firstTimer) clearTimeout(firstTimer);
+      clearTimeout(hardTimer);
+    }
+  }
+
   async function llmTranslate(text) {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), LLM_TIMEOUT);
@@ -656,13 +736,15 @@
     }
   }
 
-  async function translateVia(text) {
+  async function translateVia(text, onDelta) {
     // ── 맥락 번역 우선 ──
     // ※ 실패하면 파파고로 넘어간다. 새 경로 때문에 아예 못 쓰게 되면 안 된다.
     if (MT_MODE !== 'papago') {
       let t = '';
       try {
-        t = await llmTranslate(text);
+        t = (USE_STREAM && onDelta)
+          ? await llmTranslateStream(text, onDelta)
+          : await llmTranslate(text);
       } catch (e) {
         // ※ '연결 실패' 로 뭉뚱그리면 원인을 못 찾는다.
         //   시간초과인지 진짜 오류인지 구분해서 남긴다.
@@ -789,7 +871,7 @@
   }
 
   // 번역만 담당한다. 화면 표시는 호출한 쪽에서 한다.
-  async function translateCurrent(text) {
+  async function translateCurrent(text, onDelta) {
     text = (text || '').trim();
     if (!text) return '';
     showTerms(text);
@@ -825,7 +907,7 @@
     try {
       // ※ 캐시 열쇠는 원문(text) 그대로. 용어 처리는 엔진별로 안에서 한다.
       //   (LLM 은 지시로 넘기고, 파파고는 글자를 바꿔친다)
-      const translated = await translateVia(text);
+      const translated = await translateVia(text, onDelta);
       if (!translated) {
         dbg.lastErr = '번역 실패 (모든 엔진)';
         showToast('번역 서버 응답 없음');
@@ -1542,10 +1624,24 @@
   const pairLog = [];
   window.pairLog = pairLog;
 
+  // 스트리밍 표시 순서 — 지금 화면에 흘릴 차례인 조각만 보여준다.
+  // (여러 조각이 동시에 번역 중일 때 뒤엣것이 먼저 흘러나오면 안 된다)
+  let jobSeq = 0;
+  let shownSeq = 0;
+
   let commitChain = Promise.resolve();
   function translateLive(text, why, waited) {
     inFlight++;
     const t0 = performance.now();
+    const seq = ++jobSeq;
+
+    // 번역이 도착하는 대로 맨 아래 흐린 줄에 흘려보낸다.
+    // ※ 이미 나온 글자는 바뀌지 않는다. 뒤에 붙기만 한다.
+    const onDelta = (partial) => {
+      if (seq !== shownSeq + 1) return;   // 내 차례가 아니다
+      liveText = partial;
+      renderLines();
+    };
 
     // 이 조각이 각 단계에서 얼마나 걸렸는지 기록한다.
     //  · 대기 = 말이 시작되고 우리가 끊기로 정할 때까지 (우리 규칙 탓)
@@ -1560,7 +1656,7 @@
     // ※ inFlight 도 이 시한 안에 반드시 줄어든다.
     //   매달린 요청 때문에 0 이 되지 않으면 화면 정리가 영원히 멈춘다.
     const job = withDeadline(
-      translateCurrent(applyFixes(text.trim())).catch(() => ''),
+      translateCurrent(applyFixes(text.trim()), onDelta).catch(() => ''),
       JOB_MAX_MS
     ).finally(() => {
       inFlight--;
@@ -1572,9 +1668,13 @@
       .then(t => {
         mark.queue = Math.round(performance.now() - t0) - mark.trans;
         mark.ko = t || '(실패)';
+        // 흘려보내던 줄을 지우고 확정으로 넘긴다 (같은 글이 두 번 보이면 안 된다)
+        if (seq === shownSeq + 1 && liveText) { liveText = ''; }
+        shownSeq = seq;
         if (t) for (const line of splitKorean(t)) queueLine(line, mark);
+        renderLines();
       })
-      .catch(() => {});
+      .catch(() => { shownSeq = seq; });
   }
 
   // ── 화면 표시 ──
@@ -2215,6 +2315,7 @@
       lines = []; inFlight = 0; lastCommitAt = 0;
       liveText = ''; previewSrc = ''; liveSeq++;
       pendingLines = []; clearTimeout(revealTimer); revealTimer = null;
+      jobSeq = 0; shownSeq = 0;   // 스트리밍 순서도 초기화한다
       finishedText = ''; renderLines();
       hideCurrency();
       $terms.classList.remove('show');
