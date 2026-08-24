@@ -352,6 +352,7 @@
       // ↓ 폭탄·멈춤 진단용. 턴이 길거나 대기가 쌓이거나 시한초과가 늘면 그게 원인이다.
       `턴길이 <b>${dbg.turnLen || 0}</b>자   대기 <b>${pendingLines.length}</b>줄   ` +
       `번역중 <b>${inFlight}</b>   시한초과 <b>${dbg.timeouts || 0}</b>\n` +
+      `글자판정 <b>${dbg.script || '-'}</b>   조각 ${dbg.chunk || '-'}\n` +
       `인식 ${dbg.lastText}\n` +
       `번역 ${dbg.trans}\n` +
       (dbg.lastErr !== '-' ? `<span class="err">오류 ${dbg.lastErr}</span>` : '');
@@ -1101,6 +1102,117 @@
     });
   }
 
+  // ══════════════════════════════════════════
+  //  중국어를 자라는 대로 끊어 보내기
+  // ══════════════════════════════════════════
+  //  인식기가 턴을 닫아줄 때까지 기다리면 143자가 한 번에 와서
+  //  번역도 부정확하고 화면도 폭탄이 된다. 설정으로는 못 막았다.
+  //  그래서 말하는 중간에 우리가 직접 끊는다.
+  //
+  //  · 구두점이 보이면 거기서 끊는다
+  //  · 구두점이 없어도 일정 길이가 쌓이면 끊는다
+  //  · 맨 끝 몇 글자는 아직 고쳐질 수 있으니 남겨둔다
+  //  · 이미 내보낸 만큼은 다시 번역하지 않는다
+  const CHUNK_PUNCT = /[。！？；：，、.!?;:,]/;
+  const CHUNK_MIN   = 10;   // 구두점이 있어도 이보다 짧으면 안 끊는다
+  const CHUNK_FORCE = 22;   // 구두점이 없어도 이만큼이면 끊는다
+  const CHUNK_LAG   = 5;    // 인식기가 고칠 여유로 남겨두는 글자 수
+
+  const NOT_PLAIN = /[\s。！？；：，、.!?;:,]/;
+
+  // ══════════════════════════════════════════
+  //  중국어 글자인지 직접 확인한다
+  // ══════════════════════════════════════════
+  //  ★ 인식기가 알려주는 language_code 를 믿으면 안 된다.
+  //    그 값이 안 실려 오면 검사가 조용히 통과된다. 실제로 한국어를 말했을 때
+  //    인식기가 베트남어 글자로 받아쓴 것이 그대로 화면에 올라갔다.
+  //    글자를 직접 세는 건 절대 조용히 통과되지 않는다.
+  const HAN    = /[一-鿿㐀-䶿]/;
+  const HANGUL = /[가-힣ᄀ-ᇿ㄰-㆏]/;
+  const SKIP   = /[\s\d\p{P}\p{S}]/u;
+
+  /// 글자 중 한자가 차지하는 비율. 베트남어·한글·영어는 0 에 가깝다.
+  function scriptOf(s) {
+    let han = 0, hangul = 0, total = 0;
+    for (const ch of s) {
+      if (SKIP.test(ch)) continue;
+      total++;
+      if (HAN.test(ch)) han++;
+      else if (HANGUL.test(ch)) hangul++;
+    }
+    if (!total) return { kind: 'empty', han: 0 };
+    const r = han / total;
+    if (r >= 0.6) return { kind: 'zh', han: r };
+    if (hangul / total >= 0.4) return { kind: 'ko', han: r };
+    return { kind: 'other', han: r };
+  }
+
+  function plainLen(s) {
+    let n = 0;
+    for (const ch of s) if (!NOT_PLAIN.test(ch)) n++;
+    return n;
+  }
+
+  /// 구두점을 뺀 글자 n개를 지나간 위치를 돌려준다.
+  /// (구두점판과 서식없는판의 길이가 달라서 글자 수로 세야 한다)
+  function skipPlain(text, n) {
+    if (n <= 0) return 0;
+    let c = 0;
+    for (let i = 0; i < text.length; i++) {
+      if (!NOT_PLAIN.test(text[i])) c++;
+      if (c >= n) return i + 1;
+    }
+    return text.length;
+  }
+
+  let emittedPlain = 0;   // 이번 턴에서 이미 번역에 보낸 글자 수
+  let lastVoiceAt = 0;    // 마지막으로 말소리가 있었던 시각
+
+  /// 번역을 거치지 않고 그대로 화면에 올린다 (한국어 입력 등)
+  function commitPlain(t) {
+    commitChain = commitChain.then(() => { queueLine(t); }).catch(() => {});
+  }
+
+  function feedChunks(text, isFinal) {
+    for (;;) {
+      const tail = text.slice(skipPlain(text, emittedPlain));
+      if (!tail) return;
+
+      // 확정된 문장이면 끝까지 쓴다. 말하는 중이면 끝을 남겨둔다.
+      const limit = isFinal ? tail.length : tail.length - CHUNK_LAG;
+      if (limit <= 0) return;
+
+      let cut = -1;
+      for (let i = 0; i < limit; i++) {
+        if (CHUNK_PUNCT.test(tail[i]) && plainLen(tail.slice(0, i + 1)) >= CHUNK_MIN) {
+          cut = i + 1;
+          break;
+        }
+      }
+      if (cut < 0) {
+        const n = plainLen(tail.slice(0, limit));
+        // 구두점이 없으면 — 말이 멈춘 순간에 끊는다.
+        // 글자 수만으로 끊으면 "工/厂" 처럼 낱말이 갈라져 번역이 망가진다.
+        const paused = dbg.quiet && (performance.now() - lastVoiceAt) > 180;
+        if (n >= CHUNK_MIN && paused) cut = limit;
+        else if (n >= CHUNK_FORCE) cut = limit;   // 쉬지 않고 계속 말하는 경우
+        else return;
+      }
+
+      const piece = tail.slice(0, cut).trim();
+      if (!piece) return;
+
+      // ★ 중국어가 아니면 번역하지 않는다.
+      const sc = scriptOf(piece);
+      emittedPlain += plainLen(piece);
+      dbg.chunk = piece;
+      dbg.script = sc.kind;
+      if (sc.kind === 'ko') { commitPlain(piece); continue; }   // 한글은 그대로 보여준다
+      if (sc.kind !== 'zh')  { continue; }                      // 베트남어 등 오인식은 버린다
+      translateLive(piece);
+    }
+  }
+
   let commitChain = Promise.resolve();
   function translateLive(text) {
     inFlight++;
@@ -1318,6 +1430,7 @@
     };
 
     let aaiDone = '';   // 이미 처리한 확정 문장 (중복 방지)
+    emittedPlain = 0;   // 새 연결이면 보낸 글자 수도 초기화한다
 
     aaiSocket.onmessage = ev => {
       let msg;
@@ -1332,16 +1445,23 @@
       lastHeardAt = performance.now();   // 말하는 중 — 화면을 지우면 안 된다
 
 
-      if (!msg.end_of_turn && isListening) {
-        setStatus('listening', '듣는 중… ' + text.length + '자');
-        return;                       // 말하는 중에는 화면을 건드리지 않는다
+      dbg.lang = msg.language_code || '-';
+      // ※ 언어 판정은 참고만 한다. 실제 차단은 글자를 세서 한다(feedChunks).
+      //   language_code 가 안 실려 오면 검사가 조용히 통과되기 때문이다.
+
+      // ── 말하는 중 ──
+      // ※ 턴이 닫히기를 기다리지 않는다. 자란 만큼 끊어서 바로 번역한다.
+      if (!msg.end_of_turn) {
+        dbg.turnLen = text.length;
+        if (isListening) setStatus('listening', '듣는 중… ' + text.length + '자');
+        feedChunks(text, false);
+        return;
       }
-      if (!msg.end_of_turn) return;
 
       // 구두점이 붙은 결과만 쓴다. 서식 없는 확정이 먼저 오고
       // 잠시 뒤 구두점판이 또 오므로, 서식판을 기다린다.
       if (msg.turn_is_formatted === false) return;
-      if (text === aaiDone) return;
+      if (text === aaiDone) { emittedPlain = 0; return; }
       aaiDone = text;
 
       if (!dbg.tRecog && voiceAt) dbg.tRecog = Math.round(performance.now() - voiceAt);
@@ -1368,17 +1488,13 @@
       confLog.push({ lang, langConf, conf, len: text.length, text: text.slice(0, 24) });
       if (confLog.length > 60) confLog.shift();
 
-      // ※ 조용히 버리면 고장난 것처럼 보이므로 흐린 표시를 남긴다.
-      if (lang && lang !== 'zh') {
-        liveText = '··· (' + lang + ')';
-        renderLines();
-        setTimeout(() => {
-          if (liveText.startsWith('···')) { liveText = ''; renderLines(); }
-        }, 1500);
-        return;
-      }
+      // ※ 여기서 언어로 걸러내지 않는다. feedChunks 가 조각마다 글자를 보고
+      //   판단한다 (한 턴 안에 중국어와 한국어가 섞여도 각각 처리된다).
 
-      translateLive(text);   // 통째로 번역 → 결과를 잘라서 표시
+      // 턴이 닫혔다 — 아직 안 보낸 꼬리만 마무리한다.
+      // (앞부분은 말하는 중에 이미 번역해서 화면에 올라가 있다)
+      feedChunks(text, true);
+      emittedPlain = 0;
     };
 
     aaiSocket.onerror = () => {};   // onclose 에서 일괄 처리
@@ -1548,6 +1664,7 @@
         }
       }
       dbg.quiet = quiet;
+      if (!quiet) lastVoiceAt = performance.now();   // 끊을 자리를 찾는 데 쓴다
       if (!paced) { onChunk(pcm.buffer); return; }
 
       // 순간적인 소음(문 닫힘, 키보드 등)에 세션이 열리면
