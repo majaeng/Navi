@@ -380,7 +380,10 @@
     const scale = Math.max(dbg.peak, 0.02);
     const bar = '█'.repeat(Math.min(20, Math.round(dbg.rms / scale * 20)));
     $debug.innerHTML =
-      `엔진 <b>${sttMode}</b> (<b>${AAI_MODE}</b>)   세션 <b>${dbg.session}</b>   마이크 <b>${dbg.mic}</b>\n` +
+      `엔진 <b>${sttMode}</b> (<b>${AAI_MODE}</b>)` +
+      // ※ 어느 모드로 도는지 화면에 안 보이면 확인할 방법이 없다.
+      `   끊기 <b>${FAST ? '빠름' : '정확'}</b>` +
+      `   세션 <b>${dbg.session}</b>   마이크 <b>${dbg.mic}</b>\n` +
       `번역기 <b>${MT_MODE}</b>${NO_CACHE ? ' (캐시끔)' : ''}` +
       (dbg.fromCache ? ' <b>캐시</b>' : '') +
       (USE_STREAM ? ' <b>흐름</b>' : '') +
