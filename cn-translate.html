@@ -1144,7 +1144,7 @@
   //    화면에 늦게 뜬다. G2 와 비교해 우리가 느렸으므로 최소로 줄인다.
   const SENT_MIN    = 6;    // 마침표라도 이보다 짧으면 안 끊는다
   const CHUNK_MIN   = 10;   // 쉼표·멈춤으로 끊으려면 이만큼은 모여야 한다
-  const CHUNK_FORCE = 32;   // 쉬지도 않고 구두점도 없으면 이 길이에서 끊는다
+  const CHUNK_FORCE = 16;   // 쉬지도 않고 구두점도 없으면 이 길이에서 끊는다
   const CHUNK_LAG   = 3;    // 인식기가 고칠 여유로 남겨두는 글자 수
   const PAUSE_MS    = 260;  // 이만큼 조용하면 문장이 끊긴 것으로 본다
 
@@ -1195,6 +1195,31 @@
     return text.length;
   }
 
+  // ══════════════════════════════════════════
+  //  글자 수로 끊어야 할 때, 그나마 안전한 자리 찾기
+  // ══════════════════════════════════════════
+  //  중국어는 띄어쓰기가 없어서 아무 데나 자르면 낱말이 갈라진다.
+  //  ("我们要去工厂参观" → "我们要去工" / "厂参观" 처럼 되면 번역이 망가진다)
+  //  그래서 절이 새로 시작되는 낱말 바로 앞에서 끊는다.
+  const CLAUSE_HEAD = [
+    '但是','可是','不过','然而','所以','因此','因为','由于','而且','并且',
+    '然后','接着','如果','要是','要么','或者','还有','另外','此外','同时',
+    '这样','那么','就是','就得','其实','比如','包括','需要','必须','应该',
+    '希望','建议','我们','你们','他们','咱们','现在','以后','之后','之前',
+    '首先','其次','最后','当然','当时','目前','关于','对于','为了',
+  ];
+
+  /// limit 안에서 끊기 좋은 자리를 찾는다. 못 찾으면 limit 을 그대로 쓴다.
+  function safeCut(tail, limit) {
+    let best = -1;
+    for (const w of CLAUSE_HEAD) {
+      // 뒤쪽부터 — 되도록 많이 모아서 보내야 번역 맥락이 산다
+      const i = tail.lastIndexOf(w, limit - 1);
+      if (i > best && i < limit && plainLen(tail.slice(0, i)) >= CHUNK_MIN) best = i;
+    }
+    return best > 0 ? best : limit;
+  }
+
   let emittedPlain = 0;   // 이번 턴에서 이미 번역에 보낸 글자 수
   let lastVoiceAt = 0;    // 마지막으로 말소리가 있었던 시각
   let chunkStartAt = 0;   // 지금 모으는 조각이 자라기 시작한 시각
@@ -1239,14 +1264,21 @@
       // 3) 구두점이 없으면 — 말을 확실히 쉰 지점에서 끊는다
       if (cut < 0) {
         const paused = dbg.quiet && (performance.now() - lastVoiceAt) > PAUSE_MS;
-        if (paused) {
+        if (isFinal) {
+          // ★ 턴이 끝났으면 길이와 무관하게 남은 것을 전부 내보낸다.
+          //   예전에는 길이 조건에 걸려, 짧게 끝난 문장의 마지막 토막이
+          //   영영 화면에 안 나왔다.
+          cut = tail.length; why = '턴종료';
+        } else if (paused) {
           // ★ 조용해졌으면 인식기는 더 고치지 않는다. 그러니 꼬리를 남기지 않고
           //   들은 데까지 전부 쓴다. 여기서 CHUNK_LAG 를 적용하면
           //   "准备 / 好资料" 처럼 낱말 중간이 갈려 번역이 망가진다.
           if (plainLen(tail) < CHUNK_MIN) return;
           cut = tail.length; why = '멈춤';
         } else if (plainLen(tail.slice(0, limit)) >= CHUNK_FORCE) {
-          cut = limit; why = '길이초과';        // 쉬지 않고 계속 말하는 경우 — 품질이 나빠진다
+          // 쉬지 않고 계속 말하는 경우. 낱말이 갈리지 않을 자리를 찾아 끊는다.
+          cut = safeCut(tail, limit);
+          why = (cut === limit) ? '길이초과' : '절머리';
         } else {
           return;
         }
