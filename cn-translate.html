@@ -695,7 +695,7 @@
             // 첫 글자가 왔다 — 여기서부터는 전체 상한만 적용한다
             clearTimeout(firstTimer); firstTimer = null;
             dbg.llmFirstMs = Math.round(performance.now() - t0);
-            if (uttStart && !uttT3) uttT3 = performance.now() - uttStart;
+
           }
           out += d;
           onDelta(cleanOut(out));
@@ -1640,7 +1640,8 @@
       // ── 진단 ──
       // 말하는 중(부분)에 끊었는지, 문장이 끝난 뒤(확정)에야 끊었는지.
       // 확정 쪽만 올라가면 화면은 문장이 끝나야 뜬다 = 늦게 뜬다.
-      if (uttStart && !uttT2) uttT2 = performance.now() - uttStart;
+      const firstOfUtt = !!(uttStart && !uttT2);
+      if (firstOfUtt) uttT2 = performance.now() - uttStart;
       if (isFinal) dbg.cutFinal = (dbg.cutFinal || 0) + 1;
       else         dbg.cutPartial = (dbg.cutPartial || 0) + 1;
 
@@ -1657,7 +1658,7 @@
 
       if (sc.kind === 'ko') { commitPlain(piece); continue; }   // 한글은 그대로 보여준다
       if (sc.kind !== 'zh')  { continue; }                      // 베트남어 등 오인식은 버린다
-      translateLive(piece, why, waited);
+      translateLive(piece, why, waited, firstOfUtt);
     }
   }
 
@@ -1672,7 +1673,7 @@
   let shownSeq = 0;
 
   let commitChain = Promise.resolve();
-  function translateLive(text, why, waited) {
+  function translateLive(text, why, waited, firstOfUtt) {
     inFlight++;
     const t0 = performance.now();
     const seq = ++jobSeq;
@@ -1680,6 +1681,7 @@
     // 번역이 도착하는 대로 맨 아래 흐린 줄에 흘려보낸다.
     // ※ 이미 나온 글자는 바뀌지 않는다. 뒤에 붙기만 한다.
     const onDelta = (partial) => {
+      if (firstOfUtt && uttStart && !uttT3) uttT3 = performance.now() - uttStart;
       if (seq !== shownSeq + 1) return;   // 내 차례가 아니다
       liveText = partial;
       renderLines();
@@ -1713,6 +1715,7 @@
         // 흘려보내던 줄을 지우고 확정으로 넘긴다 (같은 글이 두 번 보이면 안 된다)
         if (seq === shownSeq + 1 && liveText) { liveText = ''; }
         shownSeq = seq;
+        if (firstOfUtt && uttStart && !uttT4) uttT4 = performance.now() - uttStart;
         if (t) for (const line of splitKorean(t)) queueLine(line, mark);
         renderLines();
       })
@@ -1825,7 +1828,6 @@
     lines.push(t);
     if (lines.length > MAX_LINES) lines.shift();
 
-    if (uttStart && !uttT4) uttT4 = performance.now() - uttStart;
     lastCommitAt = performance.now();
     lastTranslated = t;
     renderLines();
@@ -2175,7 +2177,10 @@
         const nowV = performance.now();
         // 한동안 조용하다가 다시 말이 시작됐다 = 새 발화의 시작점
         // ※ 여기서부터 첫 줄이 뜰 때까지를 구간별로 잰다.
-        if (nowV - lastVoiceAt > 600) {
+        // ★ 앞 조각이 아직 처리 중이면 재지 않는다.
+        //   그 상태에서 재면 앞 조각의 시점이 섞여 숫자가 뒤엉킨다.
+        //   (실제로 같은 조건에서 327ms 와 1703ms 가 번갈아 나왔다)
+        if (nowV - lastVoiceAt > 600 && inFlight === 0 && !pendingLines.length) {
           uttStart = nowV;
           uttT1 = uttT2 = uttT3 = uttT4 = 0;
         }
