@@ -1474,8 +1474,9 @@
   //    언제나 쉼표·마침표·멈춤이므로 낱말이 갈리지 않는다.
   const SENT_MIN    = FAST ? 4  : 6;    // 마침표라도 이보다 짧으면 안 끊는다
   const CHUNK_MIN   = FAST ? 6  : 10;   // 쉼표·멈춤으로 끊으려면 이만큼은 모여야 한다
-  const CHUNK_FORCE = 16;               // 이만큼 모이면 "끊을 만한 자리"를 찾기 시작한다
-  const CHUNK_HARD  = 30;               // 좋은 자리를 못 찾아도 여기서는 끊는다
+  //  ※ 이제는 강제 절단도 낱말 경계로 당기므로(wordSafeCut) 낮춰도 안전하다.
+  const CHUNK_FORCE = FAST ? 10 : 16;   // 이만큼 모이면 "끊을 만한 자리"를 찾기 시작한다
+  const CHUNK_HARD  = FAST ? 16 : 30;   // 좋은 자리를 못 찾아도 여기서는 끊는다
   const CHUNK_LAG   = FAST ? 2  : 3;    // 인식기가 고칠 여유로 남겨두는 글자 수
   const PAUSE_MS    = FAST ? 180 : 260; // 이만큼 조용하면 문장이 끊긴 것으로 본다
 
@@ -1549,6 +1550,31 @@
     '希望','建议','我们','你们','他们','咱们','现在','以后','之后','之前',
     '首先','其次','最后','当然','当时','目前','关于','对于','为了',
   ];
+
+  // ══════════════════════════════════════════
+  //  중국어 낱말 경계 (브라우저 내장 기능)
+  // ══════════════════════════════════════════
+  //  중국어는 띄어쓰기가 없어서 글자 수로 자르면 낱말이 갈린다.
+  //  ('文案' → '文'/'案' 이 되어 "최종 버전의 문" + "안 됩니다" 가 나왔다)
+  //  브라우저가 중국어 단어 경계를 알려주므로, 자를 자리를 그 경계까지 당긴다.
+  //  ※ 사전을 직접 만들 필요가 없다. 이게 이 문제의 정공법이다.
+  const zhSeg = (typeof Intl !== 'undefined' && Intl.Segmenter)
+    ? new Intl.Segmenter('zh', { granularity: 'word' })
+    : null;
+
+  /// limit 을 넘지 않는 가장 가까운 낱말 경계로 당긴다.
+  function wordSafeCut(tail, limit) {
+    if (!zhSeg) return limit;
+    let best = 0;
+    try {
+      for (const s of zhSeg.segment(tail)) {
+        const end = s.index + s.segment.length;
+        if (end > limit) break;
+        best = end;
+      }
+    } catch (e) { return limit; }
+    return best > 0 ? best : limit;
+  }
 
   /// limit 안에서 끊기 좋은 자리를 찾는다. 못 찾으면 limit 을 그대로 쓴다.
   function safeCut(tail, limit, minLen) {
@@ -1644,7 +1670,8 @@
           if (c !== limit) {
             cut = c; why = '절머리';
           } else if (plainLen(tail.slice(0, limit)) >= CHUNK_HARD) {
-            cut = limit; why = '길이초과';   // 더는 못 기다린다
+            // 더는 못 기다린다. 다만 낱말 한가운데는 피한다.
+            cut = wordSafeCut(tail, limit); why = '낱말경계';
           } else {
             return;                          // 좋은 자리가 나오길 조금 더 기다린다
           }
