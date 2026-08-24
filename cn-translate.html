@@ -363,9 +363,17 @@
       `번역중 <b>${inFlight}</b>   시한초과 <b>${dbg.timeouts || 0}</b>\n` +
       `글자판정 <b>${dbg.script || '-'}</b>   끊은이유 <b>${dbg.why || '-'}</b>\n` +
       (function () {
-        // 최근 조각 3개: 원문 → 번역. 어느 쪽이 틀렸는지 눈으로 갈라낸다.
-        return pairLog.slice(-3).map(p =>
-          `[${p.why}] ${esc(p.zh)}\n   → ${esc(p.ko)}`).join('\n') + '\n';
+        // ── 지연 내역 ──
+        // 어느 단계가 느린지 숫자로 본다. 추측으로 상수를 만지지 않기 위해서다.
+        const done = pairLog.filter(p => p.hold > 0).slice(-8);
+        if (!done.length) return '';
+        const avg = k => Math.round(done.reduce((a, p) => a + p[k], 0) / done.length);
+        const tot = avg('wait') + avg('trans') + avg('queue') + avg('hold');
+        return `지연내역(최근${done.length})  대기 <b>${avg('wait')}</b>  ` +
+               `번역 <b>${avg('trans')}</b>  줄서기 <b>${avg('queue')}</b>  ` +
+               `표시 <b>${avg('hold')}</b>  = <b>${tot}</b>ms\n` +
+               done.slice(-2).map(p =>
+                 `[${p.why}] ${esc(p.zh)}\n   → ${esc(p.ko)}`).join('\n') + '\n';
       })() +
       `인식 ${dbg.lastText}\n` +
       `번역 ${dbg.trans}\n` +
@@ -1132,11 +1140,13 @@
   //    쉼표나 멈춤은 문장이 너무 길어질 때만 쓰는 보조 수단이다.
   const SENT_PUNCT  = /[。！？.!?]/;      // 마침표급 — 문장이 끝났다
   const COMMA_PUNCT = /[，、；：,;:]/;    // 쉼표급 — 아직 문장 중간이다
-  const SENT_MIN    = 8;    // 마침표라도 이보다 짧으면 안 끊는다
-  const CHUNK_MIN   = 16;   // 쉼표·멈춤으로 끊으려면 이만큼은 모여야 한다
-  const CHUNK_FORCE = 40;   // 쉬지도 않고 구두점도 없으면 이 길이에서 끊는다
-  const CHUNK_LAG   = 5;    // 인식기가 고칠 여유로 남겨두는 글자 수
-  const PAUSE_MS    = 500;  // 이만큼 조용하면 문장이 끊긴 것으로 본다
+  //  ※ 아래 숫자들은 전부 "지연"이다. 크게 잡을수록 번역 품질은 좋아지지만
+  //    화면에 늦게 뜬다. G2 와 비교해 우리가 느렸으므로 최소로 줄인다.
+  const SENT_MIN    = 6;    // 마침표라도 이보다 짧으면 안 끊는다
+  const CHUNK_MIN   = 10;   // 쉼표·멈춤으로 끊으려면 이만큼은 모여야 한다
+  const CHUNK_FORCE = 32;   // 쉬지도 않고 구두점도 없으면 이 길이에서 끊는다
+  const CHUNK_LAG   = 3;    // 인식기가 고칠 여유로 남겨두는 글자 수
+  const PAUSE_MS    = 260;  // 이만큼 조용하면 문장이 끊긴 것으로 본다
 
   const NOT_PLAIN = /[\s。！？；：，、.!?;:,]/;
 
@@ -1187,6 +1197,7 @@
 
   let emittedPlain = 0;   // 이번 턴에서 이미 번역에 보낸 글자 수
   let lastVoiceAt = 0;    // 마지막으로 말소리가 있었던 시각
+  let chunkStartAt = 0;   // 지금 모으는 조각이 자라기 시작한 시각
 
   /// 번역을 거치지 않고 그대로 화면에 올린다 (한국어 입력 등)
   function commitPlain(t) {
@@ -1252,9 +1263,14 @@
       dbg.chunk = piece;
       dbg.script = sc.kind;
       dbg.why = why;
+      // 이 조각이 자라기 시작한 뒤 끊기까지 걸린 시간 (우리 규칙이 만든 지연)
+      const nowT = performance.now();
+      const waited = chunkStartAt ? nowT - chunkStartAt : 0;
+      chunkStartAt = nowT;
+
       if (sc.kind === 'ko') { commitPlain(piece); continue; }   // 한글은 그대로 보여준다
       if (sc.kind !== 'zh')  { continue; }                      // 베트남어 등 오인식은 버린다
-      translateLive(piece, why);
+      translateLive(piece, why, waited);
     }
   }
 
@@ -1264,21 +1280,36 @@
   window.pairLog = pairLog;
 
   let commitChain = Promise.resolve();
-  function translateLive(text, why) {
+  function translateLive(text, why, waited) {
     inFlight++;
+    const t0 = performance.now();
+
+    // 이 조각이 각 단계에서 얼마나 걸렸는지 기록한다.
+    //  · 대기 = 말이 시작되고 우리가 끊기로 정할 때까지 (우리 규칙 탓)
+    //  · 번역 = 번역 서버 왕복
+    //  · 줄서기 = 앞 조각의 번역을 기다린 시간
+    //  · 표시 = 읽기 편하라고 일부러 늦춘 시간
+    const mark = { why: why || '-', zh: text, ko: '', wait: Math.round(waited || 0),
+                   trans: 0, queue: 0, hold: 0 };
+    pairLog.push(mark);
+    if (pairLog.length > 40) pairLog.shift();
+
     // ※ inFlight 도 이 시한 안에 반드시 줄어든다.
     //   매달린 요청 때문에 0 이 되지 않으면 화면 정리가 영원히 멈춘다.
     const job = withDeadline(
       translateCurrent(applyFixes(text.trim())).catch(() => ''),
       JOB_MAX_MS
-    ).finally(() => { inFlight--; });
+    ).finally(() => {
+      inFlight--;
+      mark.trans = Math.round(performance.now() - t0);
+    });
 
     commitChain = commitChain
       .then(() => job)
       .then(t => {
-        pairLog.push({ why: why || '-', zh: text, ko: t || '(실패)' });
-        if (pairLog.length > 40) pairLog.shift();
-        if (t) for (const line of splitKorean(t)) queueLine(line);
+        mark.queue = Math.round(performance.now() - t0) - mark.trans;
+        mark.ko = t || '(실패)';
+        if (t) for (const line of splitKorean(t)) queueLine(line, mark);
       })
       .catch(() => {});
   }
@@ -1347,8 +1378,10 @@
   //  번역은 그대로 동시에 하되, 화면에는 한 줄씩 간격을 두고 올린다.
   //  ※ 밀리기 시작하면 간격을 좁혀 따라잡는다.
   // ══════════════════════════════════════════
-  const LINE_GAP_MS = 550;     // 줄 사이 기본 간격
-  const LINE_GAP_FAST = 260;   // 밀렸을 때 간격
+  // ※ 이 간격은 순수한 지연이다. 읽기 편하라고 일부러 늦추는 것인데,
+  //   G2 와 비교해 보니 우리가 눈에 띄게 느렸다. 최소한으로 줄인다.
+  const LINE_GAP_MS = 200;     // 줄 사이 기본 간격
+  const LINE_GAP_FAST = 90;    // 밀렸을 때 간격
   let pendingLines = [];
   let revealTimer = null;
 
@@ -1356,8 +1389,9 @@
   // 그럴 땐 가장 오래된 줄을 버린다. (지금 하는 말이 더 중요하다)
   const PENDING_MAX = 8;
 
-  function queueLine(t) {
-    pendingLines.push(t);
+  function queueLine(t, mark) {
+    // mark: 이 줄이 어느 조각에서 나왔는지 (지연 측정용)
+    pendingLines.push({ text: t, at: performance.now(), mark: mark || null });
     while (pendingLines.length > PENDING_MAX) pendingLines.shift();
     pumpReveal();
   }
@@ -1369,8 +1403,12 @@
     const wait = Math.max(0, gap - since);   // 한참 쉬었다면 바로 내보낸다
     revealTimer = setTimeout(() => {
       revealTimer = null;
-      const line = pendingLines.shift();
-      if (line) commitLine(line);
+      const item = pendingLines.shift();
+      if (item) {
+        // 줄 세우느라 붙잡고 있던 시간 — 순수한 낭비이므로 따로 센다
+        if (item.mark) item.mark.hold = Math.round(performance.now() - item.at);
+        commitLine(item.text);
+      }
       pumpReveal();
     }, wait);
   }
