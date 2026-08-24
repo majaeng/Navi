@@ -195,6 +195,23 @@
   })();
   const SAMPLE_RATE = 16000;
 
+  // ══════════════════════════════════════════
+  //  번역 엔진 선택
+  // ══════════════════════════════════════════
+  //  주소 뒤 ?mt=... 로 같은 음성에 대고 비교할 수 있다.
+  //   papago = 지금까지 쓰던 문장 단위 번역기 (맥락 없음)
+  //   haiku / nano / qwen / gemini / mini / deepseek = 맥락을 아는 번역
+  //
+  //  ※ 키는 워커 안에만 있다. 이 파일은 공개 저장소에 있으므로
+  //    절대 키를 여기에 적지 않는다.
+  const LLM_PROXY = 'https://llm-translate.majaeng.workers.dev';
+  const MT_MODE = (function () {
+    const m = new URLSearchParams(location.search).get('mt');
+    return ['papago', 'haiku', 'nano', 'qwen', 'gemini', 'mini', 'deepseek']
+      .includes(m) ? m : 'haiku';
+  })();
+  const LLM_TIMEOUT = 4000;
+
   // ── iFlytek 인증 프록시 (메인 엔진) ──
   // ⚠️ 아직 미설정: Worker 만든 뒤 아래 주소를 채우면 활성화됨
   const IFLYTEK_AUTH_PROXY = 'https://iflytek-auth.majaeng.workers.dev';
@@ -355,6 +372,9 @@
     const bar = '█'.repeat(Math.min(20, Math.round(dbg.rms / scale * 20)));
     $debug.innerHTML =
       `엔진 <b>${sttMode}</b> (<b>${AAI_MODE}</b>)   세션 <b>${dbg.session}</b>   마이크 <b>${dbg.mic}</b>\n` +
+      `번역기 <b>${MT_MODE}</b>` +
+      (dbg.llmModel ? ` → ${dbg.llmModel} <b>${dbg.llmMs}</b>ms` : '') +
+      (llmFails ? `   <span class="err">LLM실패 ${llmFails}회(파파고로 대체)</span>` : '') + '\n' +
       `음량 ${bar || '·'} ${dbg.rms.toFixed(4)} / 기준 ${dbg.thr.toFixed(4)}   증폭 <b>x${dbg.gain.toFixed(1)}</b>\n` +
       `보낸프레임 <b>${dbg.frames}</b>   받은응답 <b>${dbg.recv}</b>\n` +
       `지연  연결 <b>${dbg.tOpen}</b>ms  인식 <b>${dbg.tRecog}</b>ms  번역 <b>${dbg.tTrans}</b>ms\n` +
@@ -568,7 +588,73 @@
     return '';
   }
 
+  // ══════════════════════════════════════════
+  //  맥락을 아는 번역 (LLM)
+  // ══════════════════════════════════════════
+  //  파파고와 달리 앞 대화를 함께 넘긴다. 그래서
+  //   · 말투를 일정하게 유지하고
+  //   · 잘못 들린 지명을 맥락으로 바로잡고
+  //   · 끊긴 조각도 앞뒤를 보고 이어서 옮긴다.
+  //  용어 사전은 글자를 바꿔치기하지 않고 "이 표기를 써라"고 지시로 넘긴다.
+  const MT_CTX_MAX = 4;
+  const mtCtx = [];        // 최근 "중국어 → 한국어" 기록
+
+  function matchTerms(text) {
+    const hits = [];
+    for (const k of TERM_KEYS) {
+      if (!text.includes(k)) continue;
+      if (hits.some(([z]) => z.includes(k))) continue;   // 긴 용어에 포함된 짧은 말은 생략
+      hits.push([k, TERMS[k]]);
+      if (hits.length >= 6) break;
+    }
+    return hits;
+  }
+
+  async function llmTranslate(text) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), LLM_TIMEOUT);
+    try {
+      const res = await fetch(LLM_PROXY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text,
+          model: MT_MODE,
+          ctx: mtCtx.slice(-MT_CTX_MAX),
+          terms: matchTerms(text),
+        }),
+        signal: ctl.signal,
+      });
+      const data = await res.json();
+      if (data?.error) { dbg.lastErr = 'LLM: ' + data.error; return ''; }
+      const out = (data?.translated || '').trim();
+      if (out) {
+        dbg.llmModel = data.model || MT_MODE;
+        dbg.llmMs = data.ms || 0;
+        mtCtx.push(`${text} → ${out}`);
+        while (mtCtx.length > MT_CTX_MAX) mtCtx.shift();
+      }
+      return out;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function translateVia(text) {
+    // ── 맥락 번역 우선 ──
+    // ※ 실패하면 파파고로 넘어간다. 새 경로 때문에 아예 못 쓰게 되면 안 된다.
+    if (MT_MODE !== 'papago') {
+      let t = '';
+      try { t = await llmTranslate(text); } catch (e) { dbg.lastErr = 'LLM 연결 실패'; }
+      if (t) return t;
+      llmFails++;
+    }
+    return await papagoVia(applyTerms(text));
+  }
+
+  let llmFails = 0;
+
+  async function papagoVia(text) {
     const papagoShaky = papagoFails >= 3 &&
                         (Date.now() - papagoBlockedAt) < PAPAGO_BACKOFF_MS;
 
@@ -699,8 +785,9 @@
 
     setStatus('translating', '번역 중...');
     try {
-      // ※ 캐시 열쇠는 원문(text) 그대로 쓰고, 번역기에는 용어를 바꿔친 것을 보낸다.
-      const translated = await translateVia(applyTerms(text));
+      // ※ 캐시 열쇠는 원문(text) 그대로. 용어 처리는 엔진별로 안에서 한다.
+      //   (LLM 은 지시로 넘기고, 파파고는 글자를 바꿔친다)
+      const translated = await translateVia(text);
       if (!translated) {
         dbg.lastErr = '번역 실패 (모든 엔진)';
         showToast('번역 서버 응답 없음');
