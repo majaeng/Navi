@@ -1290,8 +1290,13 @@
       const isComma = ',\u3001'.includes(ch);
 
       // \uc5b4\ubbf8 + \ub744\uc5b4\uc4f0\uae30 = \ub04a\uc5b4\ub3c4 \ub418\ub294 \uc790\ub9ac
+      // ※ 어미로 끊는 것은 파파고일 때만 한다.
+      //   파파고는 구두점 없이 길게 뱉는 일이 있어 필요했지만,
+      //   LLM 은 구두점을 제대로 찍어준다. 여기서 또 끊으면
+      //   "…포함해서 / 말입니다." 처럼 어색하게 갈린다.
       let isEnding = false;
-      if (!isEnd && !isComma && chars[i + 1] === ' ' &&
+      if (MT_MODE === 'papago' &&
+          !isEnd && !isComma && chars[i + 1] === ' ' &&
           buf.trim().length >= KO_MIN && KO_END.test(buf.trim())) {
         isEnding = true;
       }
