@@ -1181,7 +1181,8 @@
   //    화면에 늦게 뜬다. G2 와 비교해 우리가 느렸으므로 최소로 줄인다.
   const SENT_MIN    = 6;    // 마침표라도 이보다 짧으면 안 끊는다
   const CHUNK_MIN   = 10;   // 쉼표·멈춤으로 끊으려면 이만큼은 모여야 한다
-  const CHUNK_FORCE = 16;   // 쉬지도 않고 구두점도 없으면 이 길이에서 끊는다
+  const CHUNK_FORCE = 16;   // 이만큼 모이면 "끊을 만한 자리"를 찾기 시작한다
+  const CHUNK_HARD  = 30;   // 좋은 자리를 못 찾아도 여기서는 끊는다
   const CHUNK_LAG   = 3;    // 인식기가 고칠 여유로 남겨두는 글자 수
   const PAUSE_MS    = 260;  // 이만큼 조용하면 문장이 끊긴 것으로 본다
 
@@ -1313,9 +1314,19 @@
           if (plainLen(tail) < CHUNK_MIN) return;
           cut = tail.length; why = '멈춤';
         } else if (plainLen(tail.slice(0, limit)) >= CHUNK_FORCE) {
-          // 쉬지 않고 계속 말하는 경우. 낱말이 갈리지 않을 자리를 찾아 끊는다.
-          cut = safeCut(tail, limit);
-          why = (cut === limit) ? '길이초과' : '절머리';
+          // 쉬지 않고 계속 말하는 경우.
+          // ★ 아무 데나 끊으면 서술어가 잘려 문장이 망가진다.
+          //   실제로 "去井里 / 吃小吃" 처럼 갈려서
+          //   "우물에 갈 수 있어" + "간식을 먹는다" 두 토막이 나왔다.
+          //   그래서 끊을 만한 자리가 있을 때만 끊고, 없으면 더 기다린다.
+          const c = safeCut(tail, limit);
+          if (c !== limit) {
+            cut = c; why = '절머리';
+          } else if (plainLen(tail.slice(0, limit)) >= CHUNK_HARD) {
+            cut = limit; why = '길이초과';   // 더는 못 기다린다
+          } else {
+            return;                          // 좋은 자리가 나오길 조금 더 기다린다
+          }
         } else {
           return;
         }
