@@ -192,6 +192,7 @@
 
   // 엔진 우선순위: iflytek → aai → browser (앞이 실패하면 다음으로)
   let sttMode = 'aai';
+  const confLog = [];        // 최근 턴들의 인식 신뢰도 (기준값 정하기 전 실측용)
   let flySocket = null;
   let flyFirstFrame = true;
   let flySlices = [];              // wpgs 스트리밍 결과 조각들
@@ -1298,6 +1299,21 @@
       aaiDone = text;
 
       if (!dbg.tRecog && voiceAt) dbg.tRecog = Math.round(performance.now() - voiceAt);
+
+      // ── 인식 신뢰도 ──
+      //  AAI 스트리밍은 한국어를 지원하지 않는다. 한국어를 말하면 그 소리를
+      //  억지로 중국어 글자에 끼워 맞추는데, 그때 신뢰도가 낮게 나온다.
+      //  그 값으로 걸러내면 엉뚱한 번역을 막을 수 있다.
+      //  ※ 기준값은 실측해서 정한다. 지금은 기록만 남긴다.
+      const ws = msg.words || [];
+      const conf = ws.length
+        ? ws.reduce((a, w) => a + (w.confidence || 0), 0) / ws.length
+        : null;
+      dbg.conf = conf;
+      dbg.turnConf = msg.end_of_turn_confidence;
+      confLog.push({ conf, turn: msg.end_of_turn_confidence, len: text.length, text: text.slice(0, 24) });
+      if (confLog.length > 60) confLog.shift();
+
       translateLive(text);   // 통째로 번역 → 결과를 잘라서 표시
     };
 
