@@ -661,7 +661,15 @@
     // ※ 실패하면 파파고로 넘어간다. 새 경로 때문에 아예 못 쓰게 되면 안 된다.
     if (MT_MODE !== 'papago') {
       let t = '';
-      try { t = await llmTranslate(text); } catch (e) { dbg.lastErr = 'LLM 연결 실패'; }
+      try {
+        t = await llmTranslate(text);
+      } catch (e) {
+        // ※ '연결 실패' 로 뭉뚱그리면 원인을 못 찾는다.
+        //   시간초과인지 진짜 오류인지 구분해서 남긴다.
+        dbg.lastErr = (e && e.name === 'AbortError')
+          ? `LLM 시간초과 (${LLM_TIMEOUT}ms 넘김)`
+          : 'LLM 오류: ' + (e && e.message ? e.message : e);
+      }
       if (t) return t;
       llmFails++;
     }
