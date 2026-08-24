@@ -1451,6 +1451,16 @@
   const CHUNK_LAG   = 3;    // 인식기가 고칠 여유로 남겨두는 글자 수
   const PAUSE_MS    = 260;  // 이만큼 조용하면 문장이 끊긴 것으로 본다
 
+  // ★ 말이 시작된 뒤 첫 조각만은 더 빨리 끊는다.
+  //   화면이 비어 있는 동안이 가장 답답하다. 첫 줄이 뜨고 나면
+  //   그 뒤로는 계속 이어지므로 조금 늦어도 티가 안 난다.
+  //   (실측: 대기 2591~4628ms 로, 첫글자 988ms 보다 이쪽이 훨씬 컸다)
+  //  ※ 낮추는 것은 '구두점으로 끊는 기준'만이다. 강제 절단 길이는 그대로 둔다.
+  //    강제 절단까지 낮추면 "新增用/户" 처럼 낱말 한가운데가 갈린다.
+  //    (실측: 4/16 이면 첫 줄이 4.0초 → 1.0초, 그것도 쉼표 자리에서 깔끔하게)
+  const FIRST_MIN   = 4;
+  const FIRST_FORCE = CHUNK_FORCE;
+
   const NOT_PLAIN = /[\s。！？；：，、.!?;:,]/;
 
   // ══════════════════════════════════════════
@@ -1513,12 +1523,13 @@
   ];
 
   /// limit 안에서 끊기 좋은 자리를 찾는다. 못 찾으면 limit 을 그대로 쓴다.
-  function safeCut(tail, limit) {
+  function safeCut(tail, limit, minLen) {
+    const need = minLen || CHUNK_MIN;
     let best = -1;
     for (const w of CLAUSE_HEAD) {
       // 뒤쪽부터 — 되도록 많이 모아서 보내야 번역 맥락이 산다
       const i = tail.lastIndexOf(w, limit - 1);
-      if (i > best && i < limit && plainLen(tail.slice(0, i)) >= CHUNK_MIN) best = i;
+      if (i > best && i < limit && plainLen(tail.slice(0, i)) >= need) best = i;
     }
     return best > 0 ? best : limit;
   }
@@ -1548,6 +1559,11 @@
 
       let why = '';   // 어떤 규칙으로 끊었는지 (진단용)
 
+      // 말이 시작된 뒤 첫 조각은 기준을 낮춘다 (화면이 빈 시간을 줄이려고)
+      const first   = emittedPlain === 0;
+      const minLen   = first ? FIRST_MIN   : CHUNK_MIN;
+      const forceLen = first ? FIRST_FORCE : CHUNK_FORCE;
+
       // 1) 마침표급 구두점 — 문장이 끝났으니 바로 끊는다
       for (let i = 0; i < limit; i++) {
         if (SENT_PUNCT.test(tail[i]) && plainLen(tail.slice(0, i + 1)) >= SENT_MIN) {
@@ -1558,8 +1574,8 @@
       // 2) 쉼표급 구두점 — 충분히 길 때만 끊는다
       if (cut < 0) {
         for (let i = 0; i < limit; i++) {
-          if (COMMA_PUNCT.test(tail[i]) && plainLen(tail.slice(0, i + 1)) >= CHUNK_MIN) {
-            cut = i + 1; why = '쉼표';
+          if (COMMA_PUNCT.test(tail[i]) && plainLen(tail.slice(0, i + 1)) >= minLen) {
+            cut = i + 1; why = first ? '쉼표(첫)' : '쉼표';
             break;
           }
         }
@@ -1576,15 +1592,15 @@
           // ★ 조용해졌으면 인식기는 더 고치지 않는다. 그러니 꼬리를 남기지 않고
           //   들은 데까지 전부 쓴다. 여기서 CHUNK_LAG 를 적용하면
           //   "准备 / 好资料" 처럼 낱말 중간이 갈려 번역이 망가진다.
-          if (plainLen(tail) < CHUNK_MIN) return;
-          cut = tail.length; why = '멈춤';
-        } else if (plainLen(tail.slice(0, limit)) >= CHUNK_FORCE) {
+          if (plainLen(tail) < minLen) return;
+          cut = tail.length; why = first ? '멈춤(첫)' : '멈춤';
+        } else if (plainLen(tail.slice(0, limit)) >= forceLen) {
           // 쉬지 않고 계속 말하는 경우.
           // ★ 아무 데나 끊으면 서술어가 잘려 문장이 망가진다.
           //   실제로 "去井里 / 吃小吃" 처럼 갈려서
           //   "우물에 갈 수 있어" + "간식을 먹는다" 두 토막이 나왔다.
           //   그래서 끊을 만한 자리가 있을 때만 끊고, 없으면 더 기다린다.
-          const c = safeCut(tail, limit);
+          const c = safeCut(tail, limit, minLen);
           if (c !== limit) {
             cut = c; why = '절머리';
           } else if (plainLen(tail.slice(0, limit)) >= CHUNK_HARD) {
