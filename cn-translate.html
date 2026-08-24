@@ -393,6 +393,10 @@
       // ↓ 폭탄·멈춤 진단용. 턴이 길거나 대기가 쌓이거나 시한초과가 늘면 그게 원인이다.
       `턴길이 <b>${dbg.turnLen || 0}</b>자   대기 <b>${pendingLines.length}</b>줄   ` +
       `번역중 <b>${inFlight}</b>   시한초과 <b>${dbg.timeouts || 0}</b>\n` +
+      // ★ 첫 줄이 뜨기까지의 내역. 말이 시작된 순간이 0 이다.
+      (uttT4 ? `첫줄내역  말→인식 <b>${Math.round(uttT1)}</b>  →끊기 <b>${Math.round(uttT2 - uttT1)}</b>  ` +
+               `→첫글자 <b>${Math.round(uttT3 - uttT2)}</b>  →표시 <b>${Math.round(uttT4 - uttT3)}</b>  ` +
+               `= <b>${Math.round(uttT4)}</b>ms\n` : '') +
       `끊기 말하는중 <b>${dbg.cutPartial || 0}</b> / 문장끝 <b>${dbg.cutFinal || 0}</b>   ` +
       `중간구두점 <b>${dbg.partPunct || '-'}</b>\n` +
       `글자판정 <b>${dbg.script || '-'}</b>   끊은이유 <b>${dbg.why || '-'}</b>   ` +
@@ -688,6 +692,7 @@
             // 첫 글자가 왔다 — 여기서부터는 전체 상한만 적용한다
             clearTimeout(firstTimer); firstTimer = null;
             dbg.llmFirstMs = Math.round(performance.now() - t0);
+            if (uttStart && !uttT3) uttT3 = performance.now() - uttStart;
           }
           out += d;
           onDelta(cleanOut(out));
@@ -1540,6 +1545,15 @@
   let lastVoiceAt = 0;    // 마지막으로 말소리가 있었던 시각
   let chunkStartAt = 0;   // 지금 모으는 조각이 자라기 시작한 시각
 
+  // ── 첫 줄이 뜨기까지 걸리는 시간의 내역 ──
+  //  말이 시작된 순간을 0 으로 잡고 네 지점을 찍는다.
+  //  추측으로 상수를 만지지 않기 위해 넣는다.
+  let uttStart = 0;
+  let uttT1 = 0;   // 인식기가 첫 글자를 돌려준 시각
+  let uttT2 = 0;   // 우리가 첫 조각을 끊은 시각
+  let uttT3 = 0;   // 번역 첫 글자가 도착한 시각
+  let uttT4 = 0;   // 화면에 첫 줄이 오른 시각
+
   /// 번역을 거치지 않고 그대로 화면에 올린다 (한국어 입력 등)
   function commitPlain(t) {
     commitChain = commitChain.then(() => { queueLine(t); }).catch(() => {});
@@ -1623,6 +1637,7 @@
       // ── 진단 ──
       // 말하는 중(부분)에 끊었는지, 문장이 끝난 뒤(확정)에야 끊었는지.
       // 확정 쪽만 올라가면 화면은 문장이 끝나야 뜬다 = 늦게 뜬다.
+      if (uttStart && !uttT2) uttT2 = performance.now() - uttStart;
       if (isFinal) dbg.cutFinal = (dbg.cutFinal || 0) + 1;
       else         dbg.cutPartial = (dbg.cutPartial || 0) + 1;
 
@@ -1807,6 +1822,7 @@
     lines.push(t);
     if (lines.length > MAX_LINES) lines.shift();
 
+    if (uttStart && !uttT4) uttT4 = performance.now() - uttStart;
     lastCommitAt = performance.now();
     lastTranslated = t;
     renderLines();
@@ -1922,6 +1938,7 @@
       const text = (msg.transcript || '').trim();
       if (!text) return;
 
+      if (uttStart && !uttT1) uttT1 = performance.now() - uttStart;
       dbg.lastText = text;
       $orig.textContent = text;
       lastHeardAt = performance.now();   // 말하는 중 — 화면을 지우면 안 된다
@@ -2151,7 +2168,16 @@
         }
       }
       dbg.quiet = quiet;
-      if (!quiet) lastVoiceAt = performance.now();   // 끊을 자리를 찾는 데 쓴다
+      if (!quiet) {
+        const nowV = performance.now();
+        // 한동안 조용하다가 다시 말이 시작됐다 = 새 발화의 시작점
+        // ※ 여기서부터 첫 줄이 뜰 때까지를 구간별로 잰다.
+        if (nowV - lastVoiceAt > 600) {
+          uttStart = nowV;
+          uttT1 = uttT2 = uttT3 = uttT4 = 0;
+        }
+        lastVoiceAt = nowV;   // 끊을 자리를 찾는 데도 쓴다
+      }
       if (!paced) { onChunk(pcm.buffer); return; }
 
       // 순간적인 소음(문 닫힘, 키보드 등)에 세션이 열리면
