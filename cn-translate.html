@@ -584,10 +584,20 @@
   // 저장된 캐시 불러오기 (기본 표현 + 그동안 쌓인 것)
   const seedKeys = new Set(seedPhrases.map(([k]) => k));
   const transCache = new Map(seedPhrases);
-  try {
-    const saved = JSON.parse(localStorage.getItem(CACHE_KEY) || '[]');
-    for (const [k, v] of saved) transCache.set(k, v);
-  } catch(e) {}
+
+  // ★ 잘못된 번역이 캐시에 남으면 고쳐도 계속 그게 나온다.
+  //   주소에 ?clearcache 를 붙이면 저장본을 버리고 새로 시작한다.
+  //   (실제로 파파고가 망친 문장이 저장돼 있어, 원인을 고친 뒤에도
+  //    같은 결과가 나와서 한참 헤맸다)
+  const CLEAR_CACHE = new URLSearchParams(location.search).has('clearcache');
+  if (CLEAR_CACHE) {
+    try { localStorage.removeItem(CACHE_KEY); } catch (e) {}
+  } else {
+    try {
+      const saved = JSON.parse(localStorage.getItem(CACHE_KEY) || '[]');
+      for (const [k, v] of saved) transCache.set(k, v);
+    } catch(e) {}
+  }
 
   // 변경분을 주기적으로 저장 (매번 쓰면 느려지므로 5초마다)
   function saveCache() {
