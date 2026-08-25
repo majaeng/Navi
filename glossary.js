@@ -533,6 +533,37 @@ const SICHUAN_TERMS = {
   '茶馆': '찻집',
 };
 
+// ── 계약 협상 용어 ──
+//  ※ 배분 비율은 인식용어에만 넣고 번역 사전에 빠뜨려서
+//    "五五分" 이 그대로 "오오분" 으로 음차되어 나왔다.
+const CONTRACT_TERMS = {
+  '五五分': '5대5 분배',
+  '六四分': '6대4 분배',
+  '四六分': '4대6 분배',
+  '七三分': '7대3 분배',
+  '三七分': '3대7 분배',
+  '对半分': '반반 분배',
+  '分成比例': '수익 배분 비율',
+  '渠道费': '채널 수수료',
+  '独家发行权': '독점 퍼블리싱권',
+  '发行权': '퍼블리싱권',
+  '代理权': '대행권',
+  '保底金': '미니멈 개런티',
+  '预付款': '선급금',
+  '授权期限': '계약 기간',
+  '续约': '계약 연장',
+  '解约': '계약 해지',
+  '违约': '계약 위반',
+  '甲方': '갑',
+  '乙方': '을',
+  '保密协议': '비밀유지 계약',
+  '知识产权': '지식재산권',
+  '过审': '심의 통과',
+  '备案': '등록 신고',
+  '安卓渠道': '안드로이드 채널',
+  '苹果商店': '앱스토어',
+};
+
 const MY_TERMS = {
   // ── 협력사 ──
   //  ※ '神来之笔' 는 '신의 한 수' 라는 뜻의 관용구다.
@@ -1075,7 +1106,8 @@ const GLOSSARY_PHRASES = {
 // cn-translate.html 에서 이 파일을 읽어 사용합니다.
 if (typeof window !== 'undefined') {
   window.GLOSSARY_FIXES = GLOSSARY_FIXES;
-  window.GLOSSARY_TERMS = Object.assign({}, GLOSSARY_TERMS, SICHUAN_TERMS, MY_TERMS);
+  window.GLOSSARY_TERMS =
+    Object.assign({}, GLOSSARY_TERMS, SICHUAN_TERMS, CONTRACT_TERMS, MY_TERMS);
 
   // ══════════════════════════════════════════════════════
   //  인식기에 미리 알려줄 말 (keyterms_prompt, 최대 100개)
