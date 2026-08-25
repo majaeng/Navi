@@ -321,8 +321,13 @@ async function connect() {
       lastEv = ev.type || '?';
       evSeen[lastEv] = (evSeen[lastEv] || 0) + 1;
 
+      // ★ 이벤트 이름에 'session.' 이 붙는 것과 안 붙는 것이 섞여 있다.
+      //   문서 예제만 보고 전부 붙는다고 가정했다가, 번역이 198개나
+      //   도착했는데 화면이 비어 있었다. 접두사를 떼고 비교한다.
+      const kind = (ev.type || '').replace(/^session\./, '');
+
       // 한국어 번역이 조각조각 도착한다
-      if (ev.type === 'session.output_transcript.delta') {
+      if (kind === 'output_transcript.delta') {
         if (speechAt && !firstAt) {
           firstAt = performance.now();
           const d = Math.round(firstAt - speechAt);
@@ -335,7 +340,7 @@ async function connect() {
       }
 
       // 원문(중국어)도 함께 온다 — 인식이 맞는지 눈으로 확인하는 용도
-      if (ev.type === 'session.input_transcript.delta') {
+      if (kind === 'input_transcript.delta') {
         if (!speechAt) { speechAt = performance.now(); firstAt = 0; }
         srcText += ev.delta || '';
         if (srcText.length > 400) srcText = srcText.slice(-400);
@@ -346,18 +351,18 @@ async function connect() {
       // ★ 한 덩어리가 끝났다는 신호. 여기서 줄을 바꾼다.
       //   이 모델은 마침표를 찍지 않으므로 글자만 보고는 끊을 자리를 알 수 없다.
       //   (그래서 처음엔 "준비해봤는데지금 이 계획대로" 처럼 다 붙어 나왔다)
-      if (ev.type === 'session.output_transcript.done') {
+      if (kind === 'output_transcript.done') {
         commitLive();
         speechAt = 0; firstAt = 0;
         render();
       }
 
-      if (ev.type === 'session.input_transcript.done') {
+      if (kind === 'input_transcript.done') {
         speechAt = 0; firstAt = 0;
         srcText += '\n';
       }
 
-      if (ev.type === 'error' || ev.error) {
+      if (kind === 'error' || ev.error) {
         // ※ 오류 내용을 잘라내지 않는다. 줄이면 원인을 못 찾는다.
         lastErr = '오류: ' + (ev.error?.message || JSON.stringify(ev).slice(0, 200));
         setStatus('오류 — 아래 참조', 'err');
