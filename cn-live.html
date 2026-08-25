@@ -143,6 +143,17 @@ const evSeen = {};
 // ★ 실제로 어떤 모양으로 오는지 한 번은 눈으로 봐야 한다.
 //   필드 이름을 짐작해서 ev.delta 로 읽었는데 화면이 비어 있었다.
 let sampleEv = '';
+// 최근 이벤트를 그대로 남긴다. 무엇이 오다 멈췄는지 이걸로 본다.
+const evLog = [];
+function logEv(ev) {
+  const t = (ev.type || '?').replace(/^session\./, '');
+  let extra = '';
+  if (typeof ev.delta === 'string') extra = ' ' + JSON.stringify(ev.delta.slice(0, 20));
+  else if (ev.error) extra = ' ' + JSON.stringify(ev.error).slice(0, 80);
+  const at = new Date().toLocaleTimeString('ko-KR', { hour12: false });
+  evLog.push(`${at} ${t}${extra}`);
+  while (evLog.length > 8) evLog.shift();
+}
 
 function renderStat() {
   const avg = firstTimes.length
@@ -158,6 +169,7 @@ function renderStat() {
     `마지막 <b>${lastEv}</b>\n` +
     (kinds ? `종류 ${kinds}\n` : '') +
     (sampleEv ? `원본 ${sampleEv}\n` : '') +
+    (evLog.length ? evLog.join('\n') + '\n' : '') +
     (lastErr ? `<span class="err">${lastErr}</span>` : '');
 }
 setInterval(renderStat, 500);
@@ -333,6 +345,7 @@ async function connect() {
       evCount++;
       lastEv = ev.type || '?';
       evSeen[lastEv] = (evSeen[lastEv] || 0) + 1;
+      logEv(ev);
 
       // ★ 이벤트 이름에 'session.' 이 붙는 것과 안 붙는 것이 섞여 있다.
       //   문서 예제만 보고 전부 붙는다고 가정했다가, 번역이 198개나
