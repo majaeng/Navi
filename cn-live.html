@@ -143,6 +143,12 @@ const evSeen = {};
 // ★ 실제로 어떤 모양으로 오는지 한 번은 눈으로 봐야 한다.
 //   필드 이름을 짐작해서 ev.delta 로 읽었는데 화면이 비어 있었다.
 let sampleEv = '';
+// ★ 마이크에 소리가 들어오는지 눈으로 봐야 한다.
+//   이게 없어서, 모델이 약한 소음을 듣고 지어낸 "좋아요," 를
+//   번역이 되는 줄 알고 한참 헤맸다.
+let micLevel = 0;
+let micPeak = 0;
+let audioCtx = null;
 // 최근 이벤트를 그대로 남긴다. 무엇이 오다 멈췄는지 이걸로 본다.
 const evLog = [];
 function logEv(ev) {
@@ -165,6 +171,8 @@ function renderStat() {
     `모델 <b>gpt-realtime-translate</b>   언어 <b>${LANG}</b>   ` +
     `연결 <b>${sessionAt ? Math.round(sessionAt) : '-'}</b>ms   ` +
     `첫글자 <b>${avg || '-'}</b>ms (${firstTimes.length}회)\n` +
+    `마이크 ${'█'.repeat(Math.min(20, Math.round(micLevel * 400)))||'·'} ` +
+    `<b>${micLevel.toFixed(4)}</b> (최대 <b>${micPeak.toFixed(4)}</b>)\n` +
     `상태 <b>${connState}</b> / 채널 <b>${chanState}</b>   받은이벤트 <b>${evCount}</b>   ` +
     `마지막 <b>${lastEv}</b>\n` +
     (kinds ? `종류 ${kinds}\n` : '') +
@@ -301,6 +309,27 @@ async function connect() {
         autoGainControl: true,
       },
     });
+
+    // 마이크 음량 측정 (보내는 것과 같은 소리를 그대로 잰다)
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
+      const src = audioCtx.createMediaStreamSource(stream);
+      const an = audioCtx.createAnalyser();
+      an.fftSize = 1024;
+      src.connect(an);
+      const buf = new Float32Array(an.fftSize);
+      const tick = () => {
+        if (!stream) return;
+        an.getFloatTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        micLevel = Math.sqrt(sum / buf.length);
+        if (micLevel > micPeak) micPeak = micLevel;
+        requestAnimationFrame(tick);
+      };
+      tick();
+    } catch (e) { lastErr = '음량 측정 실패: ' + e.message; }
 
     setStatus('연결 중…');
     closing = false;
