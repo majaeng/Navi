@@ -175,18 +175,30 @@ function commitIfSentence() {
 let retryTimer = null;
 let retryCount = 0;
 
+// ★ 다시 시도해도 소용없는 오류가 있다.
+//   요금제·권한 문제(4xx)는 몇 번을 붙어도 같은 답이 온다.
+//   실제로 429(한도 초과)를 받고도 0.8초마다 계속 붙어서
+//   콘솔에 같은 오류가 열 번 찍혔다.
+let fatal = false;
+
 function scheduleRetry() {
-  if (retryTimer || !running) return;
+  if (retryTimer || !running || fatal) return;
   retryCount++;
-  setStatus(`끊김 — 다시 연결 중 (${retryCount})`, 'err');
+  if (retryCount > 5) {
+    lastErr += ' — 다섯 번 실패해서 멈춥니다';
+    stop();
+    return;
+  }
+  // 붙을수록 간격을 늘린다
+  const wait = Math.min(800 * Math.pow(2, retryCount - 1), 8000);
+  setStatus(`끊김 — ${Math.round(wait / 1000)}초 뒤 재연결 (${retryCount}/5)`, 'err');
   retryTimer = setTimeout(async () => {
     retryTimer = null;
     if (!running) return;
     // 화면의 글자는 지우지 않는다. 연결만 새로 만든다.
     teardown();
-    running = true;
     await connect();
-  }, 800);
+  }, wait);
 }
 
 function teardown() {
@@ -198,7 +210,7 @@ function teardown() {
 async function start() {
   if (running) return;
   running = true;
-  retryCount = 0;
+  retryCount = 0; fatal = false;
   lines = []; live = ''; srcText = '';
   render();
   await connect();
@@ -307,12 +319,26 @@ async function connect() {
         body: offer.sdp,
       }
     );
-    if (!sdpRes.ok) throw new Error('연결 실패: ' + (await sdpRes.text()).slice(0, 200));
+    if (!sdpRes.ok) {
+      const body = (await sdpRes.text()).slice(0, 300);
+      // 요금제·권한 문제는 다시 시도해도 같은 답이 온다. 이유를 그대로 보여준다.
+      if (sdpRes.status === 429) {
+        fatal = true;
+        throw new Error(
+          '429 — OpenAI 사용 한도. gpt-realtime-translate 는 무료 등급에서 지원되지 않습니다. ' +
+          '결제 설정에서 $5 이상 충전하면 Tier 1 이 되어 풀립니다. ' + body);
+      }
+      if (sdpRes.status === 401 || sdpRes.status === 403) {
+        fatal = true;
+        throw new Error(sdpRes.status + ' — 키 권한 문제. ' + body);
+      }
+      throw new Error('연결 실패 ' + sdpRes.status + ': ' + body);
+    }
 
     await pc.setRemoteDescription({ type: 'answer', sdp: await sdpRes.text() });
 
     sessionAt = performance.now() - t0;
-    lastErr = '';
+    lastErr = ''; retryCount = 0; fatal = false;
     setStatus('듣는 중 · Enter 정지', 'on');
   } catch (e) {
     // ※ 여기서 통째로 멈추면 안 된다. 한 번 실패했다고 회의가 끝나지 않는다.
