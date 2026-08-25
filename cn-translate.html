@@ -326,13 +326,30 @@
   //  ※ 하나만 찾으면 "원가 3만6천, 운송비 8천" 같은 말에서 뒤엣것을 놓친다.
   function detectAmounts(text) {
     const out = [];
+    const add = (raw) => {
+      const val = /^[\d.,]+$/.test(raw) ? parseFloat(raw.replace(/,/g, '')) : parseChinese(raw);
+      if (val > 0 && out.indexOf(val) < 0) out.push(val);
+    };
+
+    // 1) 단위가 붙은 경우 — 三万六千块, 12000元
     const re = /(\d+(?:\.\d+)?|[零一二三四五六七八九两十百千万亿]+)\s*(?:块钱|元钱|人民币|块|元)/g;
     let m;
-    while ((m = re.exec(text)) !== null) {
-      const raw = m[1];
-      const val = /^[\d.]+$/.test(raw) ? parseFloat(raw) : parseChinese(raw);
-      if (val > 0 && out.indexOf(val) < 0) out.push(val);
-      if (out.length >= 4) break;
+    // ※ 여기서 잡은 자리는 지워둔다. 안 그러면 '三万六千块' 에서
+    //   '三万' 이 아래 검사에 또 걸려 3만 위안이 유령처럼 하나 더 뜬다.
+    let rest = text;
+    while ((m = re.exec(text)) !== null && out.length < 4) {
+      add(m[1]);
+      rest = rest.replace(m[0], ' '.repeat(m[0].length));
+    }
+
+    // 2) ★ 단위를 생략한 경우 — "支付一百万" 처럼 万/亿 로 끝나면 금액이다.
+    //    실제 대화에서는 块·元 을 생략하는 쪽이 훨씬 흔한데,
+    //    단위를 요구하다 보니 환율 표시가 아예 안 떴다.
+    //    ※ '일백만 유저', '삼십 일' 같은 수량·기간과 구별해야 하므로
+    //      뒤에 다른 단위 명사가 오면 제외한다.
+    const re2 = /(\d+(?:\.\d+)?|[零一二三四五六七八九两十百千]*[万亿])(?!\s*(?:用户|玩家|人次|人|次|天|日|个月|个星期|周|年|台|个|条|款|米|公里|平方|块|元))/g;
+    while ((m = re2.exec(rest)) !== null && out.length < 4) {
+      if (/[万亿]/.test(m[1])) add(m[1]);
     }
     return out;
   }
