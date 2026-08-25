@@ -405,6 +405,10 @@
 
   const $money = document.getElementById('currency-badge');
 
+  // 이 자리에서 오간 금액의 최대치 — 자릿수가 동떨어진 값을 가려내는 기준
+  let moneyMaxSeen = 0;
+  const DOUBT_RATIO = 50;   // 지금까지의 최대보다 이 배수를 넘으면 의심한다
+
   function pushMoney(list) {
     if (!cnyToKrw || !list || !list.length) return;
     const now = performance.now();
@@ -412,7 +416,16 @@
       if (!v) continue;
       const dup = moneyList.find(m => m.cny === v);
       if (dup) { dup.at = now; continue; }   // 같은 금액이면 시간만 늘린다
-      moneyList.push({ cny: v, at: now });
+
+      // ★ 인식이 뭉개지면 없는 금액이 생긴다.
+      //   실측: '恢复到五五'(5대5로 돌아간다)가 '七亿'(7억)으로 잘못 들려
+      //   화면에 "7억 위안 = 1,438억원" 이 떴다.
+      //   8만~38만 위안을 논의하던 자리라 자릿수가 명백히 어긋난다.
+      //   지우지는 않는다 — 진짜 큰 금액일 수도 있으므로 표시만 달아둔다.
+      const doubt = moneyMaxSeen > 0 && v > moneyMaxSeen * DOUBT_RATIO;
+      if (!doubt) moneyMaxSeen = Math.max(moneyMaxSeen, v);
+
+      moneyList.push({ cny: v, at: now, doubt });
     }
     while (moneyList.length > MONEY_MAX) moneyList.shift();
     renderMoney();
@@ -427,10 +440,12 @@
       row.className = 'currency-row' + (i < last ? ' old' : '');
       const a = document.createElement('span');
       a.className = 'currency-cny';
-      a.textContent = `${cnyText(m.cny)} =`;
+      // 자릿수가 동떨어진 금액에는 물음표를 단다 (인식이 뭉개졌을 수 있다)
+      a.textContent = (m.doubt ? '? ' : '') + `${cnyText(m.cny)} =`;
       const b = document.createElement('span');
       b.className = 'currency-krw';
       b.textContent = `${Math.round(m.cny * cnyToKrw).toLocaleString()}원`;
+      if (m.doubt) row.classList.add('old');   // 흐리게 — 확신하지 않는다는 표시
       row.append(a, b);
       $money.append(row);
     });
