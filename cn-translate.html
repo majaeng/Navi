@@ -1775,6 +1775,15 @@
       if (isFinal && !why) why = '턴종료';
 
       // 앞 조각에서 넘어온 구두점으로 시작하면 떼어낸다 ("，下午…" → "下午…")
+      // ★ 숫자 한가운데서 끊으면 금액이 사라진다.
+      //   실측: '支付一百万' 이 '一百' / '万' 으로 갈려
+      //   "지급할 수 있습니다" + "만 위안" 이 되어 100만이 증발했다.
+      //   낱말 갈림보다 심각하다 — 회의에서 금액은 틀리면 안 된다.
+      if (!isFinal) {
+        const after = tail.slice(cut).replace(/^[\s。！？；：，、.!?;:,]+/, '')[0];
+        if (after && '万亿千百十块元个'.includes(after)) return;   // 더 기다린다
+      }
+
       const piece = tail.slice(0, cut).replace(/^[\s。！？；：，、.!?;:,]+/, '').trim();
       if (!piece) return;
 
