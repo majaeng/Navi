@@ -158,17 +158,53 @@ function renderStat() {
 }
 setInterval(renderStat, 500);
 
-// 문장이 끝나면 확정 줄로 넘긴다.
-// ※ 모델이 문장부호를 찍어주므로 우리가 끊을 자리를 찾을 필요가 없다.
+// ══════════════════════════════════════════
+//  줄 나누기
+// ══════════════════════════════════════════
+//  이 모델은 마침표를 찍지 않는다. 대신 한 덩어리가 끝나면
+//  session.output_transcript.done 을 보내주므로 그때 줄을 바꾼다.
+//  ※ 우리가 중국어를 끊을 필요는 없다. 그건 모델이 한다.
+//    여기서 하는 건 '읽기 좋게 줄을 나누는 것'뿐이다.
+const LINE_MAX = 42;   // 이보다 길어지면 화면을 넘어가니 중간에라도 나눈다
+
+function pushLine(t) {
+  const s = (t || '').trim();
+  if (!s) return;
+  lines.push(s);
+  while (lines.length > MAX_LINES) lines.shift();
+}
+
+/// 지금 쌓인 글을 확정 줄로 넘긴다
+function commitLive() {
+  if (!live.trim()) { live = ''; return; }
+  // 너무 길면 어절 경계에서 나눈다
+  let rest = live.trim();
+  while (rest.length > LINE_MAX) {
+    let cut = rest.lastIndexOf(' ', LINE_MAX);
+    if (cut < LINE_MAX * 0.5) cut = LINE_MAX;   // 띄어쓰기가 없으면 그냥 자른다
+    pushLine(rest.slice(0, cut));
+    rest = rest.slice(cut).trim();
+  }
+  pushLine(rest);
+  live = '';
+}
+
+// 마침표가 찍히는 경우도 있으니 그때는 바로 나눈다
 function commitIfSentence() {
   const m = live.match(/^(.*?[.!?。！？])\s*(.*)$/s);
-  if (!m) return;
-  const done = m[1].trim();
-  if (done) {
-    lines.push(done);
-    while (lines.length > MAX_LINES) lines.shift();
+  if (m) {
+    pushLine(m[1]);
+    live = m[2] || '';
+    return;
   }
-  live = m[2] || '';
+  // 마침표 없이 계속 길어지면 화면을 넘어가므로 중간에 나눈다
+  if (live.length > LINE_MAX * 2) {
+    const cut = live.lastIndexOf(' ', LINE_MAX);
+    if (cut > LINE_MAX * 0.5) {
+      pushLine(live.slice(0, cut));
+      live = live.slice(cut).trim();
+    }
+  }
 }
 
 // 끊기면 다시 붙는다. 회의 중에 한 번 끊겼다고 끝나면 안 된다.
@@ -307,9 +343,18 @@ async function connect() {
       }
 
       // 한 문장이 끝났다 — 다음 문장의 지연을 새로 재기 위해 초기화
-      if (ev.type === 'session.input_transcript.done' ||
-          ev.type === 'session.output_transcript.done') {
+      // ★ 한 덩어리가 끝났다는 신호. 여기서 줄을 바꾼다.
+      //   이 모델은 마침표를 찍지 않으므로 글자만 보고는 끊을 자리를 알 수 없다.
+      //   (그래서 처음엔 "준비해봤는데지금 이 계획대로" 처럼 다 붙어 나왔다)
+      if (ev.type === 'session.output_transcript.done') {
+        commitLive();
         speechAt = 0; firstAt = 0;
+        render();
+      }
+
+      if (ev.type === 'session.input_transcript.done') {
+        speechAt = 0; firstAt = 0;
+        srcText += '\n';
       }
 
       if (ev.type === 'error' || ev.error) {
