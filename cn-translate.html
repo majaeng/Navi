@@ -2323,6 +2323,17 @@
     const needResample = Math.abs(actualRate - SAMPLE_RATE) > 1;
     dbg.mic = '정상 ' + actualRate + 'Hz' + (needResample ? '→16k' : '');
 
+    // ★ 예전 오디오 경로를 반드시 끊는다.
+    //   변수만 덮어쓰면 예전 노드가 그래프에 붙은 채로 계속 소리를 흘려보낸다.
+    //   그러면 같은 소리가 두 번 전송되어 인식기에 '我们我们', '年年' 처럼 들리고
+    //   문장 전체가 뭉개진다. (실측: 가짜 '七亿' 금액까지 나왔다)
+    if (procNode || srcNode) {
+      try { procNode?.disconnect(); } catch (e) {}
+      try { srcNode?.disconnect(); } catch (e) {}
+      procNode = null; srcNode = null;
+      dbg.rewired = (dbg.rewired || 0) + 1;
+    }
+
     srcNode = audioCtx.createMediaStreamSource(mediaStream);
     procNode = audioCtx.createScriptProcessor(4096, 1, 1);
 
