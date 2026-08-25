@@ -180,6 +180,11 @@ let retryCount = 0;
 //   실제로 429(한도 초과)를 받고도 0.8초마다 계속 붙어서
 //   콘솔에 같은 오류가 열 번 찍혔다.
 let fatal = false;
+// ★ 우리가 직접 닫은 것인지 구분한다.
+//   이게 없으면 teardown() 이 부른 onclose 를 '끊김' 으로 오해해
+//   재연결을 걸고, 그게 또 teardown 을 불러 끝없이 돈다.
+//   (실측: 세션이 4개까지 만들어졌다)
+let closing = false;
 
 function scheduleRetry() {
   if (retryTimer || !running || fatal) return;
@@ -202,6 +207,7 @@ function scheduleRetry() {
 }
 
 function teardown() {
+  closing = true;
   if (pc) { try { pc.close(); } catch (e) {} pc = null; }
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   connState = '-'; chanState = '-';
@@ -236,28 +242,36 @@ async function connect() {
     });
 
     setStatus('연결 중…');
-    pc = new RTCPeerConnection();
-    pc.addTrack(stream.getAudioTracks()[0], stream);
+    closing = false;
+    // ※ 이번 연결을 지역 변수로 잡아둔다.
+    //   await 사이에 재연결이 끼어들어 pc 가 바뀌면
+    //   옛 절차가 새 연결을 건드리거나 null 을 만져 터진다.
+    const myPc = new RTCPeerConnection();
+    pc = myPc;
+    myPc.addTrack(stream.getAudioTracks()[0], stream);
 
     // 번역된 음성도 돌아온다. 자막만 쓸 것이므로 재생하지 않는다.
     // (안경에서는 이걸 스피커로 내보내는 선택도 가능하다)
-    pc.ontrack = () => {};
+    myPc.ontrack = () => {};
 
     // 연결이 왜 끊기는지 보이게 한다
-    pc.onconnectionstatechange = () => {
-      connState = pc.connectionState;
+    myPc.onconnectionstatechange = () => {
+      if (pc !== myPc) return;          // 이미 교체된 옛 연결이다
+      connState = myPc.connectionState;
       if (connState === 'failed' || connState === 'disconnected') {
+        if (closing) return;            // 우리가 닫은 것이다
         lastErr = '연결 끊김 (' + connState + ')';
         if (running) scheduleRetry();
       }
     };
-    pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed') lastErr = 'ICE 실패';
+    myPc.oniceconnectionstatechange = () => {
+      if (pc === myPc && myPc.iceConnectionState === 'failed') lastErr = 'ICE 실패';
     };
 
-    const ch = pc.createDataChannel('oai-events');
-    ch.onopen  = () => { chanState = 'open'; };
+    const ch = myPc.createDataChannel('oai-events');
+    ch.onopen  = () => { if (pc === myPc) chanState = 'open'; };
     ch.onclose = () => {
+      if (pc !== myPc || closing) return;   // 우리가 닫았거나 옛 연결이다
       chanState = 'closed';
       if (running) { lastErr = '채널이 닫힘'; scheduleRetry(); }
     };
@@ -305,8 +319,9 @@ async function connect() {
       }
     };
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+    const offer = await myPc.createOffer();
+    await myPc.setLocalDescription(offer);
+    if (pc !== myPc) return;   // 그새 새 연결로 교체됐다
 
     const sdpRes = await fetch(
       'https://api.openai.com/v1/realtime/translations/calls',
@@ -335,7 +350,8 @@ async function connect() {
       throw new Error('연결 실패 ' + sdpRes.status + ': ' + body);
     }
 
-    await pc.setRemoteDescription({ type: 'answer', sdp: await sdpRes.text() });
+    if (pc !== myPc) return;   // 응답을 기다리는 사이에 교체됐다
+    await myPc.setRemoteDescription({ type: 'answer', sdp: await sdpRes.text() });
 
     sessionAt = performance.now() - t0;
     lastErr = ''; retryCount = 0; fatal = false;
