@@ -56,6 +56,8 @@
     position: absolute; left: var(--safe); bottom: var(--safe);
     font-family: ui-monospace, Menlo, monospace; font-size: 12px;
     color: rgba(255,255,255,0.5);
+    white-space: pre-wrap; line-height: 1.6;
+    right: var(--safe);
   }
   .stat b { color: #8effa8; font-weight: 400; }
   .stat .err { color: #ff8080; }
@@ -130,14 +132,29 @@ function render() {
   $src.textContent = srcText.slice(-120);
 }
 
+// ── 진단 ──
+// 왜 멈추는지 알려면 상태를 눈으로 봐야 한다.
+let connState = '-';
+let chanState = '-';
+let evCount = 0;
+let lastEv = '-';
+let lastErr = '';
+const evSeen = {};
+
 function renderStat() {
   const avg = firstTimes.length
     ? Math.round(firstTimes.reduce((a, b) => a + b, 0) / firstTimes.length)
     : 0;
+  const kinds = Object.keys(evSeen).slice(-6)
+    .map(k => `${k.replace('session.', '')}×${evSeen[k]}`).join(' ');
   $stat.innerHTML =
     `모델 <b>gpt-realtime-translate</b>   언어 <b>${LANG}</b>   ` +
     `연결 <b>${sessionAt ? Math.round(sessionAt) : '-'}</b>ms   ` +
-    `첫글자 <b>${avg || '-'}</b>ms (최근 ${firstTimes.length}회)`;
+    `첫글자 <b>${avg || '-'}</b>ms (${firstTimes.length}회)\n` +
+    `상태 <b>${connState}</b> / 채널 <b>${chanState}</b>   받은이벤트 <b>${evCount}</b>   ` +
+    `마지막 <b>${lastEv}</b>\n` +
+    (kinds ? `종류 ${kinds}\n` : '') +
+    (lastErr ? `<span class="err">${lastErr}</span>` : '');
 }
 setInterval(renderStat, 500);
 
@@ -154,12 +171,41 @@ function commitIfSentence() {
   live = m[2] || '';
 }
 
+// 끊기면 다시 붙는다. 회의 중에 한 번 끊겼다고 끝나면 안 된다.
+let retryTimer = null;
+let retryCount = 0;
+
+function scheduleRetry() {
+  if (retryTimer || !running) return;
+  retryCount++;
+  setStatus(`끊김 — 다시 연결 중 (${retryCount})`, 'err');
+  retryTimer = setTimeout(async () => {
+    retryTimer = null;
+    if (!running) return;
+    // 화면의 글자는 지우지 않는다. 연결만 새로 만든다.
+    teardown();
+    running = true;
+    await connect();
+  }, 800);
+}
+
+function teardown() {
+  if (pc) { try { pc.close(); } catch (e) {} pc = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  connState = '-'; chanState = '-';
+}
+
 async function start() {
   if (running) return;
   running = true;
+  retryCount = 0;
   lines = []; live = ''; srcText = '';
   render();
+  await connect();
+}
 
+// 연결만 담당한다 (재연결 때 화면을 지우지 않으려고 분리했다)
+async function connect() {
   try {
     setStatus('토큰 받는 중…');
     const t0 = performance.now();
@@ -185,10 +231,33 @@ async function start() {
     // (안경에서는 이걸 스피커로 내보내는 선택도 가능하다)
     pc.ontrack = () => {};
 
+    // 연결이 왜 끊기는지 보이게 한다
+    pc.onconnectionstatechange = () => {
+      connState = pc.connectionState;
+      if (connState === 'failed' || connState === 'disconnected') {
+        lastErr = '연결 끊김 (' + connState + ')';
+        if (running) scheduleRetry();
+      }
+    };
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'failed') lastErr = 'ICE 실패';
+    };
+
     const ch = pc.createDataChannel('oai-events');
+    ch.onopen  = () => { chanState = 'open'; };
+    ch.onclose = () => {
+      chanState = 'closed';
+      if (running) { lastErr = '채널이 닫힘'; scheduleRetry(); }
+    };
+    ch.onerror = (e) => { lastErr = '채널 오류'; };
+
     ch.onmessage = (e) => {
       let ev;
       try { ev = JSON.parse(e.data); } catch (err) { return; }
+
+      evCount++;
+      lastEv = ev.type || '?';
+      evSeen[lastEv] = (evSeen[lastEv] || 0) + 1;
 
       // 한국어 번역이 조각조각 도착한다
       if (ev.type === 'session.output_transcript.delta') {
@@ -218,7 +287,9 @@ async function start() {
       }
 
       if (ev.type === 'error' || ev.error) {
-        setStatus('오류: ' + (ev.error?.message || '알 수 없음'), 'err');
+        // ※ 오류 내용을 잘라내지 않는다. 줄이면 원인을 못 찾는다.
+        lastErr = '오류: ' + (ev.error?.message || JSON.stringify(ev).slice(0, 200));
+        setStatus('오류 — 아래 참조', 'err');
       }
     };
 
@@ -241,18 +312,20 @@ async function start() {
     await pc.setRemoteDescription({ type: 'answer', sdp: await sdpRes.text() });
 
     sessionAt = performance.now() - t0;
+    lastErr = '';
     setStatus('듣는 중 · Enter 정지', 'on');
   } catch (e) {
-    setStatus(String(e.message || e), 'err');
-    running = false;
-    stop();
+    // ※ 여기서 통째로 멈추면 안 된다. 한 번 실패했다고 회의가 끝나지 않는다.
+    lastErr = String(e.message || e);
+    if (running) scheduleRetry();
+    else setStatus(lastErr, 'err');
   }
 }
 
 function stop() {
   running = false;
-  if (pc) { try { pc.close(); } catch (e) {} pc = null; }
-  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  teardown();
   setStatus('정지됨 · Enter 로 시작');
 }
 
