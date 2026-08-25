@@ -140,6 +140,9 @@ let evCount = 0;
 let lastEv = '-';
 let lastErr = '';
 const evSeen = {};
+// ★ 실제로 어떤 모양으로 오는지 한 번은 눈으로 봐야 한다.
+//   필드 이름을 짐작해서 ev.delta 로 읽었는데 화면이 비어 있었다.
+let sampleEv = '';
 
 function renderStat() {
   const avg = firstTimes.length
@@ -154,6 +157,7 @@ function renderStat() {
     `상태 <b>${connState}</b> / 채널 <b>${chanState}</b>   받은이벤트 <b>${evCount}</b>   ` +
     `마지막 <b>${lastEv}</b>\n` +
     (kinds ? `종류 ${kinds}\n` : '') +
+    (sampleEv ? `원본 ${sampleEv}\n` : '') +
     (lastErr ? `<span class="err">${lastErr}</span>` : '');
 }
 setInterval(renderStat, 500);
@@ -327,6 +331,10 @@ async function connect() {
       const kind = (ev.type || '').replace(/^session\./, '');
 
       // 한국어 번역이 조각조각 도착한다
+      if (kind === 'output_transcript.delta' && !sampleEv) {
+        sampleEv = JSON.stringify(ev).slice(0, 260);
+      }
+
       if (kind === 'output_transcript.delta') {
         if (speechAt && !firstAt) {
           firstAt = performance.now();
@@ -334,7 +342,12 @@ async function connect() {
           firstTimes.push(d);
           if (firstTimes.length > 10) firstTimes.shift();
         }
-        live += ev.delta || '';
+        // 필드 이름이 무엇이든 글자를 찾아낸다
+        const piece = (typeof ev.delta === 'string' ? ev.delta : '')
+          || (ev.delta && typeof ev.delta.text === 'string' ? ev.delta.text : '')
+          || (typeof ev.text === 'string' ? ev.text : '')
+          || (typeof ev.transcript === 'string' ? ev.transcript : '');
+        live += piece;
         commitIfSentence();
         render();
       }
@@ -342,7 +355,9 @@ async function connect() {
       // 원문(중국어)도 함께 온다 — 인식이 맞는지 눈으로 확인하는 용도
       if (kind === 'input_transcript.delta') {
         if (!speechAt) { speechAt = performance.now(); firstAt = 0; }
-        srcText += ev.delta || '';
+        srcText += (typeof ev.delta === 'string' ? ev.delta : '')
+          || (typeof ev.text === 'string' ? ev.text : '')
+          || (typeof ev.transcript === 'string' ? ev.transcript : '');
         if (srcText.length > 400) srcText = srcText.slice(-400);
         render();
       }
