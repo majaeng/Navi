@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
+<meta name="meta-mrbd-web-app-capable" content="yes">
+<title>중한 실시간 번역 (음성 직접)</title>
+<style>
+  :root {
+    --safe: 24px;
+    --fs: 24px;
+    --money: #ffc95a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #000; color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo',
+                 'Noto Sans KR', sans-serif;
+    overflow: hidden;
+  }
+  .wrap { position: relative; width: 100%; height: 100%; padding: var(--safe); }
+
+  .top {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 15px; color: rgba(255,255,255,0.55);
+  }
+  .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #666; flex: none;
+  }
+  .dot.on { background: #4a9eff; }
+  .dot.err { background: #ff5a5a; }
+
+  /* 번역문 — 화면의 주인공 */
+  .trans {
+    margin-top: 18px;
+    font-size: var(--fs); line-height: 1.45; font-weight: 600;
+    white-space: pre-wrap; word-break: break-word;
+    height: calc(var(--fs) * 1.45 * 11);
+    overflow: hidden;
+  }
+  /* 아직 말하는 중인 부분은 흐리게 — 확정된 앞부분은 밝기가 안 바뀐다 */
+  .trans .tail { color: rgba(255,255,255,0.72); }
+
+  /* 원문 (참고용, 작게) */
+  .src {
+    position: absolute; left: var(--safe); right: var(--safe);
+    bottom: calc(var(--safe) + 34px);
+    font-size: 14px; color: rgba(255,255,255,0.32);
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 44px; overflow: hidden;
+  }
+
+  .stat {
+    position: absolute; left: var(--safe); bottom: var(--safe);
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    color: rgba(255,255,255,0.5);
+  }
+  .stat b { color: #8effa8; font-weight: 400; }
+  .stat .err { color: #ff8080; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <span class="dot" id="dot"></span>
+    <span id="status">Enter 를 눌러 시작</span>
+  </div>
+
+  <div class="trans" id="trans"></div>
+  <div class="src" id="src"></div>
+  <div class="stat" id="stat"></div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════
+//  음성 → 한국어 직접 번역 (gpt-realtime-translate)
+//
+//  지금 쓰는 cn-translate.html 과 비교하려고 만든 별도 페이지다.
+//  구조가 완전히 다르다:
+//
+//   기존:  소리 → (AssemblyAI) 중국어 글자 → (하이쿠) 한국어 글자
+//   여기:  소리 → 한국어 글자         ... 한 번에
+//
+//  그래서 우리가 만든 문장 끊기 규칙이 전혀 필요 없다.
+//  언제 끊을지는 모델이 알아서 한다.
+// ══════════════════════════════════════════════════════
+
+const TOKEN_URL = 'https://openai-live.majaeng.workers.dev';
+const LANG = new URLSearchParams(location.search).get('lang') || 'ko';
+
+const $dot    = document.getElementById('dot');
+const $status = document.getElementById('status');
+const $trans  = document.getElementById('trans');
+const $src    = document.getElementById('src');
+const $stat   = document.getElementById('stat');
+
+const MAX_LINES = 11;
+
+let pc = null;
+let stream = null;
+let running = false;
+
+let lines = [];        // 확정된 줄
+let live = '';         // 지금 들어오는 중인 글
+let srcText = '';      // 원문 (참고용)
+
+// 측정: 말이 시작되고 첫 한국어 글자가 뜰 때까지
+let speechAt = 0;
+let firstAt = 0;
+let sessionAt = 0;
+const firstTimes = [];
+
+function setStatus(t, kind) {
+  $status.textContent = t;
+  $dot.className = 'dot' + (kind === 'on' ? ' on' : kind === 'err' ? ' err' : '');
+}
+
+function render() {
+  $trans.textContent = '';
+  if (lines.length) $trans.append(document.createTextNode(lines.join('\n')));
+  if (live) {
+    if (lines.length) $trans.append(document.createTextNode('\n'));
+    const s = document.createElement('span');
+    s.className = 'tail';
+    s.textContent = live;
+    $trans.append(s);
+  }
+  $src.textContent = srcText.slice(-120);
+}
+
+function renderStat() {
+  const avg = firstTimes.length
+    ? Math.round(firstTimes.reduce((a, b) => a + b, 0) / firstTimes.length)
+    : 0;
+  $stat.innerHTML =
+    `모델 <b>gpt-realtime-translate</b>   언어 <b>${LANG}</b>   ` +
+    `연결 <b>${sessionAt ? Math.round(sessionAt) : '-'}</b>ms   ` +
+    `첫글자 <b>${avg || '-'}</b>ms (최근 ${firstTimes.length}회)`;
+}
+setInterval(renderStat, 500);
+
+// 문장이 끝나면 확정 줄로 넘긴다.
+// ※ 모델이 문장부호를 찍어주므로 우리가 끊을 자리를 찾을 필요가 없다.
+function commitIfSentence() {
+  const m = live.match(/^(.*?[.!?。！？])\s*(.*)$/s);
+  if (!m) return;
+  const done = m[1].trim();
+  if (done) {
+    lines.push(done);
+    while (lines.length > MAX_LINES) lines.shift();
+  }
+  live = m[2] || '';
+}
+
+async function start() {
+  if (running) return;
+  running = true;
+  lines = []; live = ''; srcText = '';
+  render();
+
+  try {
+    setStatus('토큰 받는 중…');
+    const t0 = performance.now();
+    const r = await fetch(TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language: LANG }),
+    });
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    const secret = data.secret;
+
+    setStatus('마이크 여는 중…');
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true },
+    });
+
+    setStatus('연결 중…');
+    pc = new RTCPeerConnection();
+    pc.addTrack(stream.getAudioTracks()[0], stream);
+
+    // 번역된 음성도 돌아온다. 자막만 쓸 것이므로 재생하지 않는다.
+    // (안경에서는 이걸 스피커로 내보내는 선택도 가능하다)
+    pc.ontrack = () => {};
+
+    const ch = pc.createDataChannel('oai-events');
+    ch.onmessage = (e) => {
+      let ev;
+      try { ev = JSON.parse(e.data); } catch (err) { return; }
+
+      // 한국어 번역이 조각조각 도착한다
+      if (ev.type === 'session.output_transcript.delta') {
+        if (speechAt && !firstAt) {
+          firstAt = performance.now();
+          const d = Math.round(firstAt - speechAt);
+          firstTimes.push(d);
+          if (firstTimes.length > 10) firstTimes.shift();
+        }
+        live += ev.delta || '';
+        commitIfSentence();
+        render();
+      }
+
+      // 원문(중국어)도 함께 온다 — 인식이 맞는지 눈으로 확인하는 용도
+      if (ev.type === 'session.input_transcript.delta') {
+        if (!speechAt) { speechAt = performance.now(); firstAt = 0; }
+        srcText += ev.delta || '';
+        if (srcText.length > 400) srcText = srcText.slice(-400);
+        render();
+      }
+
+      // 한 문장이 끝났다 — 다음 문장의 지연을 새로 재기 위해 초기화
+      if (ev.type === 'session.input_transcript.done' ||
+          ev.type === 'session.output_transcript.done') {
+        speechAt = 0; firstAt = 0;
+      }
+
+      if (ev.type === 'error' || ev.error) {
+        setStatus('오류: ' + (ev.error?.message || '알 수 없음'), 'err');
+      }
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    const sdpRes = await fetch(
+      'https://api.openai.com/v1/realtime/translations/calls',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${secret}`,
+          'Content-Type': 'application/sdp',
+        },
+        body: offer.sdp,
+      }
+    );
+    if (!sdpRes.ok) throw new Error('연결 실패: ' + (await sdpRes.text()).slice(0, 200));
+
+    await pc.setRemoteDescription({ type: 'answer', sdp: await sdpRes.text() });
+
+    sessionAt = performance.now() - t0;
+    setStatus('듣는 중 · Enter 정지', 'on');
+  } catch (e) {
+    setStatus(String(e.message || e), 'err');
+    running = false;
+    stop();
+  }
+}
+
+function stop() {
+  running = false;
+  if (pc) { try { pc.close(); } catch (e) {} pc = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  setStatus('정지됨 · Enter 로 시작');
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    running ? stop() : start();
+    e.preventDefault();
+  }
+  if (e.key === 'Escape') {
+    lines = []; live = ''; srcText = ''; render();
+    e.preventDefault();
+  }
+});
+
+render();
+renderStat();
+</script>
+</body>
+</html>
