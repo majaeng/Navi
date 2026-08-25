@@ -278,7 +278,16 @@ async function connect() {
 
     setStatus('마이크 여는 중…');
     stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true },
+      // ★ echoCancellation 은 반드시 꺼야 한다.
+      //   켜두면 브라우저가 "스피커에서 나온 소리"로 판단해 지워버린다.
+      //   스피커로 중국어를 재생해 시험할 때 마이크에 아무것도 안 들어간다.
+      //   (기존 앱에도 같은 주석이 있는데 이 파일에 옮겨오지 않아 또 겪었다)
+      //   autoGainControl 은 켠다 — 끄면 내장 마이크 입력이 너무 작다.
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: true,
+      },
     });
 
     setStatus('연결 중…');
