@@ -778,7 +778,10 @@
   //  ※ 이미 화면에 나온 글자는 바뀌지 않는다. 뒤에 붙기만 한다.
   //  끄려면 주소에 ?nostream 을 붙인다.
   const USE_STREAM = !new URLSearchParams(location.search).has('nostream');
-  const FIRST_BYTE_MS = 4000;    // 첫 글자가 이 안에 안 오면 포기
+  // ※ 4초는 너무 짧았다. 첫 글자가 보통 900~1400ms 인데 가끔 튀고,
+  //   그때마다 파파고로 넘어가 품질이 떨어진 결과가 나왔다.
+  //   하이쿠를 조금 더 기다리는 편이 낫다.
+  const FIRST_BYTE_MS = 6500;    // 첫 글자가 이 안에 안 오면 포기
   const STREAM_MAX_MS = 12000;   // 전체 상한
 
   function cleanOut(s) {
@@ -888,11 +891,14 @@
     // ※ 실패하면 파파고로 넘어간다. 새 경로 때문에 아예 못 쓰게 되면 안 된다.
     if (MT_MODE !== 'papago') {
       let t = '';
+      let timedOut = false;
+      const t0 = performance.now();
       try {
         t = (USE_STREAM && onDelta)
           ? await llmTranslateStream(text, onDelta)
           : await llmTranslate(text);
       } catch (e) {
+        if (e && e.name === 'AbortError') timedOut = true;
         // ※ '연결 실패' 로 뭉뚱그리면 원인을 못 찾는다.
         //   시간초과인지 진짜 오류인지 구분해서 남긴다.
         dbg.lastErr = (e && e.name === 'AbortError')
@@ -900,6 +906,20 @@
           : 'LLM 오류: ' + (e && e.message ? e.message : e);
       }
       if (t) { lastVia = MT_MODE; return t; }
+
+      // ★ 빨리 실패했을 때만 한 번 더 시도한다.
+      //   순간적인 연결 오류는 다시 하면 되지만,
+      //   이미 몇 초를 기다리다 시간초과된 경우에 또 기다리면
+      //   자막이 쓸모없이 늦어진다. 그때는 바로 대비책으로 간다.
+      if (!timedOut && performance.now() - t0 < 2000) {
+        try {
+          t = (USE_STREAM && onDelta)
+            ? await llmTranslateStream(text, onDelta)
+            : await llmTranslate(text);
+        } catch (e) { /* 두 번째도 실패 */ }
+        if (t) { lastVia = MT_MODE; dbg.llmRetried = (dbg.llmRetried || 0) + 1; return t; }
+      }
+
       llmFails++;
     }
     const p = await papagoVia(applyTerms(text));
@@ -1580,7 +1600,8 @@
   // 번역을 말한 순서대로 내보내려고 약속을 사슬로 잇는다.
   // 그런데 사슬은 한 칸이 막히면 뒤가 전부 멈춘다.
   // 그래서 어떤 번역이든 이 시한을 넘기면 빈 값으로 처리하고 넘어간다.
-  const JOB_MAX_MS = 6000;   // 파파고 3s + 보조 2.5s 보다 넉넉하게
+  // 하이쿠 첫 글자 6.5초 + 대비책 왕복까지 담을 수 있어야 한다.
+  const JOB_MAX_MS = 11000;
 
   function withDeadline(p, ms) {
     return new Promise(resolve => {
