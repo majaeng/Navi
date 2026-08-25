@@ -493,7 +493,8 @@
       `끊기 말하는중 <b>${dbg.cutPartial || 0}</b> / 문장끝 <b>${dbg.cutFinal || 0}</b>   ` +
       `중간구두점 <b>${dbg.partPunct || '-'}</b>\n` +
       `글자판정 <b>${dbg.script || '-'}</b>   끊은이유 <b>${dbg.why || '-'}</b>   ` +
-      `사전 <b>${TERM_KEYS.length}</b>개 중 <b>${dbg.termHits || 0}</b>회 적용 ${dbg.terms || ''}\n` +
+      `사전 <b>${TERM_KEYS.length}</b>개 중 <b>${dbg.termHits || 0}</b>회 적용 ${dbg.terms || ''}   ` +
+      `인식용어 <b>${(window.GLOSSARY_KEYTERMS || []).length}</b>개\n` +
       (function () {
         // ── 지연 내역 ──
         // 어느 단계가 느린지 숫자로 본다. 추측으로 상수를 만지지 않기 위해서다.
@@ -2089,6 +2090,11 @@
       // 주소 뒤에 ?mode=max_accuracy / ?mode=min_latency 로 즉시 비교할 수 있다.
       mode: AAI_MODE,
       end_of_turn_confidence_threshold: '0.5',
+      // ★ 인식기에 미리 알려준다 — 오늘 겪은 오인식의 근본 대책이다.
+      //   '锦里'를 '井里'로 들으면 번역은 손쓸 수 없다("우물에 갈 수 있어").
+      //   여기 등록하면 애초에 제대로 들린다. Universal-3.5 Pro 전용 기능.
+      prompt: (window.GLOSSARY_PROMPT || '').slice(0, 1750),
+      keyterms_prompt: JSON.stringify(window.GLOSSARY_KEYTERMS || []),
       min_turn_silence: '400',    // 조이지 않는다 — 화면 속도는 우리가 끊어서 낸다
       max_turn_silence: '1200',
       token,
