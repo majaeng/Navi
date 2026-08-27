@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
   <meta name="mrbd-web-app-capable" content="yes">
   <title>KO-Navi</title>
+  <!-- 안경 앱 격자에 쓰이는 아이콘.
+       문서: Unicode 기호나 52x52 이상 PNG. SVG 는 안 된다. -->
+  <link rel="icon" href="/navi-icon-192.png" sizes="192x192" type="image/png">
+  <link rel="icon" href="/navi-icon-96.png" sizes="96x96" type="image/png">
+  <link rel="apple-touch-icon" href="/navi-icon-192.png" sizes="192x192">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -18,158 +23,184 @@
     /* ── 홈 ── */
     #screen-home { padding: 28px 24px; gap: 12px; background: #000; }
     .title { font-size: 22px; font-weight: 700; color: #fff; text-align: center; letter-spacing: -0.5px; }
-    .title span { color: #4a9eff; }
+    .title span { color: #5cc8ff; }
 
     .location-box {
       background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
       border-radius: 12px; padding: 10px 14px;
     }
-    .location-box .label { font-size: 10px; color: #555; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .location-box .value { color: #4a9eff; font-size: 12px; }
+    .location-box .label { font-size: 16px; color: #b8c8d8; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .location-box .value { color: #5cc8ff; font-size: 16px; }
 
     .search-btn {
       background: rgba(255,255,255,0.05); border: 1.5px solid rgba(255,255,255,0.12);
       border-radius: 12px; padding: 13px 16px;
       cursor: pointer; display: flex; align-items: center; gap: 10px;
-      color: #666; font-size: 14px; transition: all 150ms;
+      color: #c0ccd8; font-size: 18px; transition: all 150ms;
     }
     .search-btn:focus, .search-btn.focused {
-      border-color: #4a9eff; background: rgba(74,158,255,0.08);
-      box-shadow: 0 0 0 1px rgba(74,158,255,0.3); outline: none; color: #fff;
+      border-color: #5cc8ff; background: rgba(92,200,255,0.08);
+      box-shadow: 0 0 16px rgba(92,200,255,0.55); outline: none; color: #fff;
     }
 
     .dest-list { display: flex; flex-direction: column; gap: 6px; flex: 1; overflow: hidden; }
     .dest-item {
-      background: rgba(255,255,255,0.04); border: 1.5px solid transparent;
+      background: rgba(255,255,255,0.04); border: 2px solid transparent;
       border-radius: 12px; padding: 11px 14px; cursor: pointer;
       transition: all 150ms; display: flex; align-items: center; gap: 10px; min-height: 50px;
     }
     .dest-item:focus, .dest-item.focused {
-      outline: none; border-color: #4a9eff; background: rgba(74,158,255,0.08);
-      box-shadow: 0 0 0 1px rgba(74,158,255,0.2);
+      outline: none; border-color: #5cc8ff; background: rgba(92,200,255,0.08);
+      box-shadow: 0 0 0 1px rgba(92,200,255,0.2);
     }
-    .dest-item .icon { font-size: 15px; }
-    .dest-item .name { font-size: 13px; font-weight: 600; }
-    .dest-item .addr { font-size: 10px; color: #555; margin-top: 1px; }
-    .hint { font-size: 10px; color: #333; text-align: center; }
+    .dest-item .icon { font-size: 19px; }
+    .dest-item .name { font-size: 17px; font-weight: 600; }
+    .dest-item .addr { font-size: 16px; color: #b8c8d8; margin-top: 1px; }
+    .hint { font-size: 16px; color: #9fb0c0; text-align: center; }
     .mode-btn {
       flex: 1; background: rgba(255,255,255,0.04); border: 1.5px solid rgba(255,255,255,0.10);
-      border-radius: 12px; padding: 11px 10px; font-size: 13px; font-weight: 600;
-      cursor: pointer; color: #555; transition: all 150ms; display: flex;
+      border-radius: 12px; padding: 11px 10px; font-size: 17px; font-weight: 600;
+      cursor: pointer; color: #b8c8d8; transition: all 150ms; display: flex;
       align-items: center; justify-content: center; gap: 6px;
     }
     .mode-btn:focus, .mode-btn.focused {
-      border-color: #4a9eff; background: rgba(74,158,255,0.08); outline: none; color: #fff;
+      border-color: #5cc8ff; background: rgba(92,200,255,0.08); outline: none; color: #fff;
     }
     .mode-btn.active-mode {
-      border-color: rgba(74,158,255,0.6); background: rgba(74,158,255,0.15); color: #fff;
+      border-color: rgba(92,200,255,0.6); background: rgba(92,200,255,0.15); color: #fff;
     }
     .mode-btn.active-mode.focused {
-      box-shadow: 0 0 0 1px rgba(74,158,255,0.4);
+      box-shadow: 0 0 0 1px rgba(92,200,255,0.4);
     }
-    .section-label { font-size: 10px; color: #444; text-transform: uppercase; letter-spacing: 0.8px; padding: 0 2px; }
+    .section-label { font-size: 16px; color: #a8b8c8; text-transform: uppercase; letter-spacing: 0.8px; padding: 0 2px; }
 
     /* ── 검색 ── */
     #screen-search-input { padding: 20px; gap: 12px; background: #000; }
     .search-header { display: flex; align-items: center; gap: 10px; }
-    .search-back { background: none; border: none; color: #4a9eff; font-size: 20px; cursor: pointer; padding: 4px 8px; }
+    .search-back { background: none; border: none; color: #5cc8ff; font-size: 20px; cursor: pointer; padding: 4px 8px; }
+    /* ★ 안경은 더하기 화면이라 '흐린 채움' 은 사실상 안 보인다.
+       결과 항목이 초점 없을 때 테두리가 투명이고 배경이 4% 흰색이라
+       어디부터 어디까지가 한 항목인지 구분이 안 됐다.
+       채움 대신 '밝은 테두리 + 밝은 글자' 로 세운다. */
     .search-input-box {
-      flex: 1; background: rgba(255,255,255,0.06); border: 1.5px solid rgba(255,255,255,0.12);
-      border-radius: 10px; padding: 10px 14px;
-      color: #fff; font-size: 15px; outline: none;
+      flex: 1; background: rgba(255,255,255,0.06);
+      border: 2px solid rgba(255,255,255,0.45);
+      border-radius: 10px; padding: 12px 14px;
+      color: #fff; font-size: 22px; outline: none;
     }
-    .search-input-box:focus { border-color: #4a9eff; }
-    .search-results { display: flex; flex-direction: column; gap: 6px; flex: 1; overflow-y: auto; }
+    .search-input-box:focus {
+      border-color: #5cc8ff; box-shadow: 0 0 16px rgba(92,200,255,0.5);
+    }
+    .search-results { display: flex; flex-direction: column; gap: 8px; flex: 1; overflow-y: auto; }
     .search-result-item {
-      background: rgba(255,255,255,0.04); border: 1.5px solid transparent;
-      border-radius: 12px; padding: 11px 14px; cursor: pointer;
+      background: none;
+      border: 2px solid rgba(255,255,255,0.38);   /* 초점이 없어도 보이게 */
+      border-radius: 12px; padding: 12px 14px; cursor: pointer;
       transition: all 150ms;
     }
     .search-result-item:focus, .search-result-item.focused {
-      outline: none; border-color: #4a9eff; background: rgba(74,158,255,0.08);
+      outline: none; border-color: #5cc8ff;
+      background: rgba(92,200,255,0.16);
+      box-shadow: 0 0 18px rgba(92,200,255,0.55);
     }
-    .search-result-item .r-name { font-size: 13px; font-weight: 600; }
-    .search-result-item .r-addr { font-size: 10px; color: #555; margin-top: 2px; }
-    .search-result-item .r-dist { font-size: 10px; color: #4a9eff; margin-top: 2px; }
-    .search-empty { color: #444; font-size: 12px; text-align: center; padding: 30px 0; }
-    .search-loading { color: #4a9eff; font-size: 12px; text-align: center; padding: 30px 0; }
+    .search-result-item .r-name { font-size: 21px; font-weight: 700; color: #fff; }
+    .search-result-item .r-addr { font-size: 17px; color: #d4e4f2; margin-top: 3px; }
+    .search-result-item .r-dist { font-size: 17px; color: #7dd8ff; margin-top: 3px; }
+    .search-empty { color: #d4e4f2; font-size: 19px; text-align: center; padding: 30px 0; }
+    .search-loading { color: #7dd8ff; font-size: 19px; text-align: center; padding: 30px 0; }
 
     /* ── AR 네비 ── */
     #screen-nav { position: relative; background: #000; }
     #ar-canvas { position: absolute; top: 0; left: 0; width: 600px; height: 600px; }
 
-    /* Meta 스타일 턴 배너 - 상단 중앙, 컴팩트 */
+    /* ★ 안내 화면 가시성
+       전에는 반투명 보라/파랑 카드에 blur 를 썼다. 일반 화면에서는 예쁘지만
+       더하기 화면에서는 색깔 반투명 배경이 그대로 '빛'이 되어 뿌옇게 번지고,
+       그 위의 글자 대비를 오히려 떨어뜨린다.
+       배경은 검게(=투명하게) 두고, 밝은 테두리와 밝은 글자로 세운다. */
+
+    /* 상단 턴 배너 */
     .turn-banner {
-      position: absolute; top: 18px; left: 50%; transform: translateX(-50%);
-      background: rgba(0,0,0,0.45);
-      border: 1px solid rgba(255,255,255,0.1);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border-radius: 50px; padding: 8px 16px 8px 8px;
-      display: flex; align-items: center; gap: 10px; z-index: 10;
+      position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.55);
+      border: 2px solid rgba(255,255,255,0.55);
+      border-radius: 50px; padding: 10px 20px 10px 10px;
+      display: flex; align-items: center; gap: 12px; z-index: 10;
       white-space: nowrap;
     }
     .turn-arrow-box {
-      width: 32px; height: 32px;
-      background: rgba(74,158,255,0.2);
+      width: 44px; height: 44px;
+      background: rgba(92,200,255,0.28);
+      border: 2px solid #5cc8ff;
       border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      font-size: 16px; flex-shrink: 0;
+      font-size: 26px; flex-shrink: 0;
     }
-    .turn-info .turn-dist { font-size: 22px; color: #fff; font-weight: 800; line-height: 1; }
-    .turn-info .turn-text { font-size: 12px; color: rgba(255,255,255,0.7); margin-top: 2px; }
+    /* 남은 거리 — 안내에서 가장 자주 보는 숫자다. 가장 크게. */
+    .turn-info .turn-dist { font-size: 34px; color: #fff; font-weight: 800; line-height: 1; }
+    .turn-info .turn-text { font-size: 19px; color: #fff; margin-top: 3px; }
 
-    /* Meta 스타일 하단 카드 - 보라/파랑 frosted glass */
+    /* 하단 카드 */
     .nav-card {
-      position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
-      background: linear-gradient(135deg, rgba(90,50,180,0.72), rgba(30,70,200,0.65));
-      border: 1px solid rgba(255,255,255,0.18);
-      backdrop-filter: blur(24px);
-      -webkit-backdrop-filter: blur(24px);
-      border-radius: 20px; padding: 14px 22px;
-      min-width: 260px;
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.55);
+      border: 2px solid rgba(255,255,255,0.5);
+      border-radius: 18px; padding: 14px 24px;
+      min-width: 280px;
       z-index: 10;
     }
     .nav-card-dest {
-      font-size: 18px; font-weight: 700; color: #fff;
-      margin-bottom: 6px;
+      font-size: 24px; font-weight: 700; color: #fff;
+      margin-bottom: 8px;
     }
-    .nav-card-row {
-      display: flex; align-items: center; gap: 6px;
-    }
-    .nav-stat {
-      display: flex; align-items: baseline; gap: 3px;
-    }
-    .nav-stat .stat-val { font-size: 14px; font-weight: 600; color: #7dff9a; }
-    .nav-stat .stat-label { font-size: 12px; color: rgba(255,255,255,0.75); }
-    .nav-divider { width: 1px; height: 14px; background: rgba(255,255,255,0.2); margin: 0 4px; }
+    .nav-card-row { display: flex; align-items: center; gap: 8px; }
+    .nav-stat { display: flex; align-items: baseline; gap: 4px; }
+    .nav-stat .stat-val { font-size: 22px; font-weight: 700; color: #8dffab; }
+    .nav-stat .stat-label { font-size: 18px; color: #fff; }
+    .nav-divider { width: 2px; height: 18px; background: rgba(255,255,255,0.5); margin: 0 6px; }
 
     /* 중앙 조준점 */
     .compass-dot {
       position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
-      width: 8px; height: 8px;
-      border: 1.5px solid rgba(255,255,255,0.4);
+      width: 10px; height: 10px;
+      border: 2px solid rgba(255,255,255,0.8);
       border-radius: 50%;
       z-index: 5; pointer-events: none;
     }
     .compass-dot::after {
       content: ''; position: absolute;
       top: 50%; left: 50%; transform: translate(-50%,-50%);
-      width: 3px; height: 3px;
-      background: #4a9eff; border-radius: 50%;
+      width: 4px; height: 4px;
+      background: #5cc8ff; border-radius: 50%;
     }
 
-    /* 닫기 버튼 - 우상단, 매우 작고 투명 */
+    /* 닫기 버튼 — 시야를 가리지 않게 작게, 다만 보이기는 해야 한다 */
     .back-btn {
-      position: absolute; top: 18px; right: 14px;
-      width: 28px; height: 28px;
-      background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 50%; color: rgba(255,255,255,0.5); font-size: 12px;
-      cursor: pointer; z-index: 20; opacity: 0.6;
+      position: absolute; top: 16px; right: 14px;
+      width: 34px; height: 34px;
+      background: rgba(0,0,0,0.5); border: 2px solid rgba(255,255,255,0.5);
+      border-radius: 50%; color: #fff; font-size: 18px;
+      cursor: pointer; z-index: 20; opacity: 0.85;
       display: flex; align-items: center; justify-content: center;
       transition: opacity 200ms;
     }
-    .back-btn:hover, .back-btn:focus { opacity: 1; outline: none; }
+    .back-btn:hover, .back-btn:focus {
+      opacity: 1; outline: none;
+      border-color: #5cc8ff; box-shadow: 0 0 14px rgba(92,200,255,0.6);
+    }
+
+    /* 조작 안내 */
+    .nav-help {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      background: rgba(0,0,0,0.72);
+      border: 2px solid rgba(255,255,255,0.55);
+      border-radius: 16px; padding: 18px 26px;
+      display: flex; flex-direction: column; gap: 8px;
+      font-size: 20px; color: #fff; text-align: center;
+      z-index: 25; pointer-events: none;
+      transition: opacity 400ms;
+    }
+    .nav-help.hidden { opacity: 0; }
 
     /* 로딩 */
     .loading-overlay {
@@ -180,11 +211,11 @@
     .loading-overlay.hidden { display: none; }
     .spinner {
       width: 32px; height: 32px; border: 2.5px solid rgba(255,255,255,0.1);
-      border-top-color: #4a9eff; border-radius: 50%;
+      border-top-color: #5cc8ff; border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .loading-text { font-size: 12px; color: #666; }
+    .loading-text { font-size: 16px; color: #c0ccd8; }
 
     /* 현재위치 펄스 애니메이션 */
     @keyframes pulse {
@@ -232,6 +263,14 @@
 <div id="screen-nav" class="screen">
   <canvas id="ar-canvas" width="600" height="600"></canvas>
 
+  <!-- 조작 안내 — 안내 시작 때 잠깐 보였다 사라진다.
+       안경에는 설명서가 없다. 처음 쓰면 종료하는 법조차 알 수 없다. -->
+  <div class="nav-help" id="nav-help">
+    <div>↑ 확대 &nbsp;·&nbsp; ↓ 축소</div>
+    <div>← 안내 종료 &nbsp;·&nbsp; → 음성 켜기/끄기</div>
+    <div>핀치: 시점 바꾸기</div>
+  </div>
+
   <!-- 중앙 고정점 -->
   <div class="compass-dot"></div>
 
@@ -277,7 +316,7 @@
 </div>
 
 <script>
-  const KAKAO_JS_KEY = '14b2d81032a1fb85494844643078aadc';
+  // ※ 카카오 키는 더 이상 쓰지 않는다 (검색을 워커로 옮김)
   const MAPBOX_TOKEN = 'pk.eyJ1IjoibWFqYWVuZyIsImEiOiJjbXNlNTk5eWwwNWgyMnhzOGUxdG5vM3RoIn0.AqqL86GG17pLS0MaSkN4ig';
   // 국내 도보 경로 (SK TMAP)
   const TMAP_KEY = 'XKa6vUNY752zXMhjUt3iA53CwCaXU8S73lMXAiZj';
@@ -317,7 +356,68 @@
   ];
 
   let currentPos = null;
-  let currentHeading = null;
+  let currentHeading = null;      // GPS 진행 방향 (멈추면 null)
+  let compassHeading = null;      // ★ 안경 나침반 — 머리가 향한 방향
+  let headingSrc = '';            // 어디서 온 값인가 (wk / abs / rel / gps)
+  let lastCompassAt = 0;
+  let lastGpsHeadingAt = 0;
+
+  // ★ 내 위치만 있고 방향이 없으면 '어느 쪽으로 첫걸음을 떼야 하는지' 를 모른다.
+  //   GPS heading 은 걷는 중에만, 그것도 부정확하게 나온다.
+  //   안경은 머리에 있으므로 나침반이 곧 '내가 보고 있는 방향' 이다.
+  //   (문서: DeviceOrientationEvent 지원, 권한 필요)
+  let compassAttached = false;    // 리스너가 실제로 붙었는가
+  function startCompass() {
+    // ★ 여기서 두 번 데였다.
+    //   ① 페이지 열릴 때 자동으로 권한을 요청했는데, 문서에 "사용자 조작에서만
+    //      부를 수 있다" 고 되어 있어 무시됐다.
+    //   ② 그래서 첫 조작 때 다시 부르게 했는데, '시작했다' 표시를 미리 켜둬서
+    //      두 번째 호출이 그냥 돌아갔다. 결국 방향이 영영 안 붙었다.
+    //   그래서 '리스너가 실제로 붙었을 때만' 표시를 켠다.
+    //   실패하면 다음 조작에서 다시 시도한다.
+    if (compassAttached) return;
+
+    const onOrient = e => {
+      let h = null, src = '';
+      if (typeof e.webkitCompassHeading === 'number' && isFinite(e.webkitCompassHeading)) {
+        h = e.webkitCompassHeading; src = 'wk';
+      } else if (e.alpha != null && isFinite(e.alpha)) {
+        // 규격상 alpha 는 반시계지만 이 안경은 시계 방향으로 준다. 그대로 쓴다.
+        h = ((e.alpha % 360) + 360) % 360; src = e.absolute ? 'abs' : 'rel';
+      }
+      if (h != null) { compassHeading = h; headingSrc = src; lastCompassAt = Date.now(); }
+    };
+
+    const attach = () => {
+      if (compassAttached) return;
+      compassAttached = true;
+      window.addEventListener('deviceorientation', onOrient);
+      // 북쪽 기준 값을 따로 주는 기기가 있다 — 있으면 그쪽이 더 정확하다
+      window.addEventListener('deviceorientationabsolute', onOrient);
+    };
+
+    try {
+      if (typeof DeviceOrientationEvent !== 'undefined'
+          && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission()
+          .then(st => { if (st === 'granted') attach(); })   // 거부되면 표시를 안 켠다
+          .catch(() => {});                                  // → 다음 조작에서 재시도
+      } else {
+        attach();
+      }
+    } catch (e) {}
+  }
+
+  /// 지금 쓸 방향 (나침반 우선, 없으면 GPS)
+  function facingDeg() {
+    const now = Date.now();
+    // 나침반은 계속 들어온다. 3초 넘게 안 오면 죽은 값이다.
+    if (compassHeading != null && now - lastCompassAt < 3000) return compassHeading;
+    // ★ GPS 방향은 걸을 때만 나온다. 멈춘 뒤에도 계속 쓰면 방향이 굳는다.
+    //   (실측: 제자리에서 돌아도 부채꼴이 안 돌았다 — 이 값이 남아 있어서였다)
+    if (currentHeading != null && now - lastGpsHeadingAt < 5000) return currentHeading;
+    return null;
+  }
   let focusIndex = 0;
   let homeFocusables = [];
   let watchId = null;
@@ -327,7 +427,6 @@
   let selectedDest = null;
   let searchResults = [];
   let searchFocusIndex = 0;
-  let rerouteTimer = null;
   let isOffline = false;
   let navProfile = 'foot'; // 'foot' | 'driving'
   let pulsePhase = 0;
@@ -368,8 +467,10 @@
   let isRerouting = false;          // 재경로 계산 중 플래그
   let mapView = { centerLat: 0, centerLng: 0, zoom: 16, pitch: 0 };
   let pitchTarget = 0;              // 0 = 탑뷰, 1 = 쿼터뷰
+  let zoomTarget = 16;              // ★ 줌을 목표값으로 두고 매 프레임 다가간다
+                                    //   (정수로 한 번에 뛰면 화면이 튄다)
   const PITCH_K = 0.0022;           // 원근 압축 강도
-  const ZOOM_MIN = 13, ZOOM_MAX = 18;
+  const ZOOM_MIN = 13, ZOOM_MAX = 19;
   const TILE_SIZE = 256;
   const vtCache = {};       // key -> [{props, geom}] 도로 피처 배열
   const vtLoading = new Set();
@@ -486,7 +587,7 @@
 
   // ── 도로 벡터선 그리기 ──
   function drawRoads(cx, cy) {
-    const z = mapView.zoom;
+    const z = tileZ();
     const EXTENT = 4096;
     const tilesNeeded = Math.ceil(300 / TILE_SIZE) + 1;
 
@@ -500,24 +601,32 @@
         for (const { props, geom } of roads) {
           const cls = props.class || '';
           let lw, alpha;
-          const z = mapView.zoom;
+          const z = tileZ();
           // 줌 낮을 때 세부 도로 숨김 (건물 외곽처럼 보이는 현상 방지)
+          // ★ 안경은 더하기 화면이라 흐린 선은 아예 안 보인다.
+          //   원래 값(굵기 0.6~2.2, 진하기 0.20~0.90)은 일반 화면 기준이었다.
+          //   굵기는 두 배 남짓, 진하기는 큰 길일수록 확실하게 올린다.
+          //   걸으면서 흘깃 보는 화면이라 '길이 있다/없다' 가 먼저 보여야 한다.
+          // ★ 선 하나로 그리면 '길' 이 아니라 '실금' 으로 보인다.
+          //   실제 지도처럼 넓은 면(도로 폭)을 먼저 깔고,
+          //   그 위에 밝은 중심선을 얹어 두 겹으로 그린다.
+          //   더하기 화면에서는 검은 테두리를 못 쓰므로(투명해진다)
+          //   '넓고 은은한 면 + 좁고 밝은 심' 조합이 가장 도로처럼 보인다.
+          let core;               // 중심선 굵기 (0 이면 안 그린다)
           if (['path','footway','pedestrian','steps','track'].includes(cls)) {
             if (z < 17) continue; // 줌 17 미만이면 보행로 숨김
-            lw = 0.6; alpha = 0.20;
+            lw = 4;  alpha = 0.45; core = 0;
           } else if (['service','alley'].includes(cls)) {
             if (z < 16) continue;
-            lw = 0.8; alpha = 0.28;
-          } else if (['motorway','trunk'].includes(cls))       { lw = 2.2; alpha = 0.90; }
-          else if (['primary','secondary'].includes(cls))      { lw = 1.6; alpha = 0.72; }
-          else if (['tertiary','street','street_limited'].includes(cls)) { lw = 1.1; alpha = 0.50; }
-          else { lw = 0.9; alpha = 0.38; }
+            lw = 6;  alpha = 0.50; core = 1.6;
+          } else if (['motorway','trunk'].includes(cls))       { lw = 16; alpha = 0.62; core = 3.8; }
+          else if (['primary','secondary'].includes(cls))      { lw = 13; alpha = 0.58; core = 3.2; }
+          else if (['tertiary','street','street_limited'].includes(cls)) { lw = 10; alpha = 0.54; core = 2.6; }
+          else { lw = 8; alpha = 0.50; core = 2.2; }
 
+          // 길 하나를 한 번만 훑어 경로를 만들고, 굵기만 바꿔 두 번 칠한다
           ctx.beginPath();
-          ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-          ctx.lineWidth = lw;
           ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-
           for (const ring of geom) {
             let first = true;
             for (const {x, y} of ring) {
@@ -529,7 +638,16 @@
               first = false;
             }
           }
+          // ① 도로 면 (넓고 은은하게)
+          ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+          ctx.lineWidth = lw;
           ctx.stroke();
+          // ② 중심선 (좁고 밝게) — 이게 있어야 길의 방향이 또렷하다
+          if (core > 0) {
+            ctx.strokeStyle = '#ffffff';   // 심은 순백으로 — 가장 밝게
+            ctx.lineWidth = core;
+            ctx.stroke();
+          }
         }
       }
     }
@@ -587,7 +705,7 @@
         const el = document.createElement('div');
         el.className = 'dest-item focusable';
         el.tabIndex = 0;
-        el.innerHTML = `<span class="icon">🕐</span><div><div class="name">${dest.name}</div><div class="addr" style="font-size:10px;color:#555">${dest.addr}</div></div>`;
+        el.innerHTML = `<span class="icon">🕐</span><div><div class="name">${dest.name}</div><div class="addr" style="font-size:16px;color:#b8c8d8">${dest.addr}</div></div>`;
         el.addEventListener('click', () => startNav(dest));
         recentList.appendChild(el);
       });
@@ -626,16 +744,7 @@
     }
   }
 
-  // ── 카카오 검색 ──
-  function loadKakaoSDK() {
-    return new Promise(resolve => {
-      if (window.kakao && window.kakao.maps && window.kakao.maps.services) { resolve(); return; }
-      const s = document.createElement('script');
-      s.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${KAKAO_JS_KEY}&libraries=services&autoload=false`;
-      s.onload = () => kakao.maps.load(resolve);
-      document.head.appendChild(s);
-    });
-  }
+  // ※ 카카오 SDK 로더는 걷어냈다 — 검색을 워커(TMAP)로 옮겼다.
 
   let searchTimer = null;
   document.getElementById('search-input').addEventListener('input', e => {
@@ -705,32 +814,39 @@
     if (currentCountry() === 'cn') {
       doTencentSearch(q);
     } else {
-      doKakaoSearch(q);
+      doKoreaSearch(q);
     }
   }
 
-  function doKakaoSearch(q) {
-    loadKakaoSDK().then(() => {
-      const ps = new kakao.maps.services.Places();
-      const opts = currentPos
-        ? { location: new kakao.maps.LatLng(currentPos.lat, currentPos.lng), sort: kakao.maps.services.SortBy.DISTANCE }
-        : {};
-      ps.keywordSearch(q, (data, status) => {
-        const el = document.getElementById('search-status');
-        if (status === kakao.maps.services.Status.OK) {
-          const normalized = data.map(p => ({
-            name: p.place_name,
-            addr: p.road_address_name || p.address_name,
-            lat: parseFloat(p.y), lng: parseFloat(p.x),
-            dist: p.distance
-          }));
-          renderSearchResults(normalized);
-        } else {
-          el.className = 'search-empty'; el.textContent = '검색 결과가 없습니다';
+  //  국내 장소검색 — 릴레이 워커의 /poi 를 부른다 (TMAP)
+  //  ★ 전에는 카카오 JS SDK 를 안경 화면에서 직접 불렀다.
+  //    카카오는 등록된 도메인에서만 동작해서 새 주소에서 막혔고,
+  //    실패 처리가 없어 '검색 중' 인 채로 멈췄다.
+  //    워커를 거치면 도메인 제한도 CORS 도 없고, 키도 화면에서 사라진다.
+  //    경로 계산이 TMAP 이니 검색도 같은 지도를 쓰는 편이 결과가 맞는다.
+  function doKoreaSearch(q) {
+    const el = document.getElementById('search-status');
+    let u = DEST_RELAY + '/poi?q=' + encodeURIComponent(q);
+    if (currentPos) u += `&lat=${currentPos.lat}&lng=${currentPos.lng}`;
+
+    fetch(u, { cache: 'no-store' })
+      .then(r => r.json())
+      .then(d => {
+        if (!d.ok) throw new Error(d.error || '검색 실패');
+        if (!d.places || !d.places.length) {
+          el.className = 'search-empty';
+          el.textContent = '검색 결과가 없습니다';
           document.getElementById('search-results').innerHTML = '';
+          return;
         }
-      }, opts);
-    });
+        renderSearchResults(d.places);
+      })
+      .catch(err => {
+        // 실패는 반드시 화면에 남긴다. 조용히 멈추면 원인을 못 찾는다.
+        el.className = 'search-empty';
+        el.textContent = '검색 실패: ' + err.message;
+        document.getElementById('search-results').innerHTML = '';
+      });
   }
 
   function doTencentSearch(q) {
@@ -792,18 +908,59 @@
   }
 
   // ── 네비 시작 ──
+  // ══════════════════════════════════════════
+  //  안내 중에는 화면이 꺼지면 안 된다
+  // ══════════════════════════════════════════
+  //  ★★ 이게 없었다. 걷거나 운전하는 동안 화면이 잠들면
+  //    그리기(requestAnimationFrame)가 멈추고 위치 콜백도 느려진다.
+  //    실보행·주행 내비로서 치명적인 누락이었다.
+  //  ※ 잠금은 화면이 뒤로 갔다 오면 풀린다. 돌아올 때 다시 잡는다.
+  //  ※ 지원 안 하는 브라우저에서도 조용히 넘어간다 — 없다고 안내가 멈추면 안 된다.
+  let wakeLock = null;
+
+  async function keepScreenOn() {
+    try {
+      if (!('wakeLock' in navigator)) return;
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } catch (e) { /* 권한이 없거나 배터리 절약 중이면 그냥 못 잡는다 */ }
+  }
+  function letScreenSleep() {
+    try { if (wakeLock) wakeLock.release(); } catch (e) {}
+    wakeLock = null;
+  }
+  document.addEventListener('visibilitychange', () => {
+    // 안내 중에 돌아왔으면 다시 잡는다
+    if (document.visibilityState === 'visible' && watchId !== null && !wakeLock) keepScreenOn();
+  });
+
   function startNav(dest) {
     saveRecentDest(dest);
+    keepScreenOn();
+    // ★ 안내 중이던 목적지를 남겨둔다.
+    //   앱을 껐다 켜면 페이지가 처음부터 다시 뜬다. 남겨두지 않으면
+    //   홈으로 돌아가 목적지를 다시 보내야 한다 —
+    //   걷다가 안경을 접거나 다른 걸 잠깐 보고 오면 매번 그렇게 된다.
+    try {
+      localStorage.setItem('navi.active', JSON.stringify({ dest, at: Date.now() }));
+    } catch (e) {}
     selectedDest = dest;
     document.getElementById('nav-dest-name').textContent = dest.name;
     showScreen('screen-nav');
     showLoading('경로 계산 중...');
+    // 조작법을 잠깐 보여준다 (처음 쓰는 사람은 종료하는 법도 모른다)
+    const help = document.getElementById('nav-help');
+    if (help) {
+      help.classList.remove('hidden');
+      clearTimeout(help._t);
+      help._t = setTimeout(() => help.classList.add('hidden'), 4000);
+    }
     if (!currentPos) fallbackPos();
 
     // 현재위치 중심, 줌 16 (Meta 스타일 - 현재 위치 하단 1/3 고정)
     mapView.centerLat = currentPos.lat;
     mapView.centerLng = currentPos.lng;
-    mapView.zoom = 16;
+    mapView.zoom = 18; zoomTarget = 18;   // 걸으면서 보는 화면이라 가깝게 잡는다
     // 탑뷰로 시작 → 경로 표시 후 쿼터뷰로 기울임
     mapView.pitch = 0;
     pitchTarget = 0;
@@ -814,6 +971,8 @@
         routeCoords = route.geometry.coordinates.map(([lng, lat]) => ({ lat, lng }));
         routeSteps = route.legs[0].steps;
         currentStepIndex = 0;
+        // ★ 진행률을 재려면 경로를 한 번 훑어 누적거리를 만들어 둬야 한다
+        buildRouteIndex(route.duration);
         const distKm = (route.distance / 1000).toFixed(1);
         const etaMin = Math.round(route.duration / 60);
         document.getElementById('nav-eta').textContent = etaMin;
@@ -835,6 +994,7 @@
         routeCoords = cached.coords;
         routeSteps = cached.steps;
         currentStepIndex = 0;
+        buildRouteIndex(0);   // 캐시에는 소요시간이 없다 — 속도로 어림한다
         updateStepUI(routeSteps[0]);
         fitRouteBounds();
         setOffline(true);
@@ -850,7 +1010,7 @@
     if (!currentPos) return;
     mapView.centerLat = currentPos.lat;
     mapView.centerLng = currentPos.lng;
-    mapView.zoom = 16; // 고정 줌 - 목적지가 멀어도 현재 주변만 표시
+    mapView.zoom = 18; zoomTarget = 18; // 고정 줌 - 현재 주변만 크게 본다
   }
 
   // ══════════════════════════════════════════
@@ -929,73 +1089,115 @@
   // ══════════════════════════════════════════
 
   // TMAP 회전 코드 → OSRM 형식
+  //  ★ TMAP 회전 코드 → 우리 표현.
+  //    보행자와 자동차가 코드 체계를 공유하지만 자동차에만 있는 것이 많다
+  //    (고속도로 입출구·P턴). 규격서에서 확인한 것만 적는다.
   const TMAP_TURN = {
-    11: ['turn', 'straight'],  12: ['turn', 'left'],        13: ['turn', 'right'],
-    14: ['turn', 'uturn'],     16: ['turn', 'sharp left'],  17: ['turn', 'slight left'],
+    11: ['turn', 'straight'],     12: ['turn', 'left'],         13: ['turn', 'right'],
+    14: ['turn', 'uturn'],        15: ['turn', 'pturn'],
+    16: ['turn', 'sharp left'],   17: ['turn', 'slight left'],
     18: ['turn', 'slight right'], 19: ['turn', 'sharp right'],
-    200: ['depart', ''],       201: ['arrive', ''],
+    43: ['turn', 'right'],        44: ['turn', 'left'],
+    // 고속도로·도시고속도로 입구
+    101: ['ramp', 'right'], 102: ['ramp', 'left'], 103: ['ramp', 'straight'],
+    111: ['ramp', 'right'], 112: ['ramp', 'left'], 113: ['ramp', 'straight'],
+    // 고속도로·도시고속도로 출구
+    104: ['exit', 'right'], 105: ['exit', 'left'], 106: ['exit', 'straight'],
+    114: ['exit', 'right'], 115: ['exit', 'left'], 116: ['exit', 'straight'],
+    117: ['turn', 'slight right'], 118: ['turn', 'slight left'],
+    200: ['depart', ''],
+    201: ['arrive', ''], 182: ['arrive', 'left'], 183: ['arrive', 'right'],
+    203: ['arrive', 'across'],
   };
 
+  //  ══════════════════════════════════════════
+  //   TMAP 경로 — 걸을 때와 탈 때는 다른 API 다
+  //  ══════════════════════════════════════════
+  //  ★★ 전에는 자동차 모드면 TMAP 을 아예 안 쓰고 OSRM 공개 서버로 넘겼다.
+  //    그 서버는 한국 도로 정확도가 떨어지고 실시간 교통도, 한국어 안내도 없다.
+  //    차에서 써보니 "도보랑 똑같다" 고 느껴진 이유의 절반이 이것이었다.
+  //  ★ TMAP 에 자동차 경로안내가 따로 있다 (규격서 확인).
+  //    응답이 보행자와 **같은 GeoJSON 구조**라 해석기를 그대로 쓴다.
+  //    다른 건 주소와 보내는 값뿐이다.
   function fetchTmapRoute(from, dest) {
-    // 자동차 모드는 TMAP 보행자 API 대상이 아니다
-    if (navProfile === 'driving') return fetchOSRMRoute(from, dest);
+    const car = (navProfile === 'driving');
 
-    return fetch('https://apis.openapi.sk.com/tmap/routes/pedestrian?version=1&format=json', {
+    const url = car
+      ? 'https://apis.openapi.sk.com/tmap/routes?version=1&format=json'
+      : 'https://apis.openapi.sk.com/tmap/routes/pedestrian?version=1&format=json';
+
+    const body = {
+      startX: from.lng, startY: from.lat,
+      endX: dest.lng,   endY: dest.lat,
+      reqCoordType: 'WGS84GEO', resCoordType: 'WGS84GEO',
+      startName: '출발', endName: '도착',
+      sort: 'index',
+    };
+    if (car) {
+      body.searchOption = '00';   // 교통최적 + 추천 (티맵 기본값)
+      body.carType = 0;           // 승용차
+      body.trafficInfo = 'Y';     // 혼잡도도 함께 받는다
+    }
+
+    return fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'appKey': TMAP_KEY },
-      body: JSON.stringify({
-        startX: from.lng, startY: from.lat,
-        endX: dest.lng,   endY: dest.lat,
-        reqCoordType: 'WGS84GEO', resCoordType: 'WGS84GEO',
-        startName: '출발', endName: '도착',
-      }),
-    }).then(r => r.json()).then(d => {
-      const feats = d.features || [];
-      if (!feats.length) throw new Error(d.error && d.error.message || 'TMAP 경로 없음');
+      body: JSON.stringify(body),
+    }).then(r => r.json()).then(parseTmapRoute);
+  }
 
-      const head = (feats[0] && feats[0].properties) || {};
-      const pts = [];
-      const steps = [];
+  /// TMAP 응답(보행자·자동차 공통 GeoJSON)을 우리 경로 형태로 옮긴다
+  function parseTmapRoute(d) {
+    const feats = d.features || [];
+    if (!feats.length) throw new Error(d.error && d.error.message || 'TMAP 경로 없음');
 
-      for (const f of feats) {
-        const pr = f.properties || {}, g = f.geometry || {};
-        if (g.type === 'LineString') {
-          // 경로선 — 중복 좌표는 건너뛴다
-          for (const c of g.coordinates) {
-            const last = pts[pts.length - 1];
-            if (!last || last[0] !== c[0] || last[1] !== c[1]) pts.push(c);
-          }
-        } else if (g.type === 'Point') {
-          const [type, mod] = TMAP_TURN[pr.turnType] || ['turn', 'straight'];
-          steps.push({
-            distance: 0,        // 아래에서 다음 지점까지 거리로 채운다
-            duration: 0,
-            name: (pr.description || '').replace(/^,\s*/, '').trim(),
-            maneuver: { type, modifier: mod, location: g.coordinates },
-          });
+    const head = (feats[0] && feats[0].properties) || {};
+    const pts = [];
+    const steps = [];
+
+    for (const f of feats) {
+      const pr = f.properties || {}, g = f.geometry || {};
+      if (g.type === 'LineString') {
+        // 경로선 — 중복 좌표는 건너뛴다
+        for (const c of g.coordinates) {
+          const last = pts[pts.length - 1];
+          if (!last || last[0] !== c[0] || last[1] !== c[1]) pts.push(c);
         }
+      } else if (g.type === 'Point') {
+        const [type, mod] = TMAP_TURN[pr.turnType] || ['turn', 'straight'];
+        // ★ 자동차는 nextRoadName 이 훨씬 쓸모 있다 ("소공로" 처럼).
+        //   description 은 "…방면으로 좌회전 후 …190m 이동" 처럼 길어서
+        //   600×600 안경 화면에 안 들어간다.
+        const label = (pr.nextRoadName || pr.description || '')
+          .replace(/^,\s*/, '').trim();
+        steps.push({
+          distance: 0,        // 아래에서 다음 지점까지 거리로 채운다
+          duration: 0,
+          name: label,
+          maneuver: { type, modifier: mod, location: g.coordinates },
+        });
       }
-      if (pts.length < 2) throw new Error('TMAP 경로 좌표 부족');
+    }
+    if (pts.length < 2) throw new Error('TMAP 경로 좌표 부족');
 
-      // 각 안내 지점 사이 거리 채우기
-      for (let i = 0; i < steps.length - 1; i++) {
-        const a = steps[i].maneuver.location, b = steps[i + 1].maneuver.location;
-        steps[i].distance = Math.round(
-          Math.hypot((b[1] - a[1]) * 111320, (b[0] - a[0]) * 111320 * Math.cos(a[1] * Math.PI / 180))
-        );
-      }
-      if (!steps.length || steps[steps.length - 1].maneuver.type !== 'arrive') {
-        steps.push({ distance: 0, duration: 0, name: '',
-          maneuver: { type: 'arrive', modifier: '', location: pts[pts.length - 1] } });
-      }
+    for (let i = 0; i < steps.length - 1; i++) {
+      const a = steps[i].maneuver.location, b = steps[i + 1].maneuver.location;
+      steps[i].distance = Math.round(
+        Math.hypot((b[1] - a[1]) * 111320, (b[0] - a[0]) * 111320 * Math.cos(a[1] * Math.PI / 180))
+      );
+    }
+    if (!steps.length || steps[steps.length - 1].maneuver.type !== 'arrive') {
+      steps.push({ distance: 0, duration: 0, name: '',
+        maneuver: { type: 'arrive', modifier: '', location: pts[pts.length - 1] } });
+    }
 
-      return {
-        distance: head.totalDistance || 0,
-        duration: head.totalTime || 0,      // TMAP은 초 단위
-        geometry: { coordinates: pts },
-        legs: [{ steps }],
-      };
-    });
+    return {
+      distance: head.totalDistance || 0,
+      duration: head.totalTime || 0,      // TMAP 은 초 단위
+      fare: head.totalFare || 0,          // 통행료 (자동차만 온다)
+      geometry: { coordinates: pts },
+      legs: [{ steps }],
+    };
   }
 
   // 나라에 따라 경로 엔진을 고른다. 실패하면 OSRM으로 넘어간다.
@@ -1013,14 +1215,26 @@
   }
 
   // ── OSRM (한국·그 외 / 텐센트 실패 시 대체) ──
+  //  ★★ 공개 OSRM 데모 서버는 **자동차 프로파일만** 호스팅한다.
+  //    'foot' 로 부르면 오류가 온다. 그런데 전에는 실패를 null 로 조용히
+  //    돌려줘서, 화면은 로딩만 사라지고 "경로 계산 중..." 이 영원히 남았다.
+  //    ※ 없는 것을 있는 척하지 않는다. 못 하면 못 한다고 던진다.
   function fetchOSRMRoute(from, dest) {
-    const url = `https://router.project-osrm.org/route/v1/${navProfile}/${from.lng},${from.lat};${dest.lng},${dest.lat}?overview=full&geometries=geojson&steps=true`;
-    return fetch(url).then(r => r.json()).then(d => d.routes?.[0] || null);
+    const profile = 'driving';   // 이 서버가 가진 건 이것뿐이다
+    const url = `https://router.project-osrm.org/route/v1/${profile}/${from.lng},${from.lat};${dest.lng},${dest.lat}?overview=full&geometries=geojson&steps=true`;
+    return fetch(url).then(r => r.json()).then(d => {
+      const r0 = d && d.routes && d.routes[0];
+      if (!r0) throw new Error('OSRM 경로 없음');
+      return r0;
+    });
   }
 
   // ── 이동 수단 선택 ──
   function setProfile(mode) {
     navProfile = mode;
+    // ★ 모드를 바꾸면 안내 상태를 비운다.
+    //   문턱·안내거리·소요시간 계산이 전부 달라지므로 옛 값이 남으면 안 된다.
+    spokenDistBucket = null; spokenBucketVal = null;
     document.getElementById('btn-foot').classList.toggle('active-mode', mode === 'foot');
     document.getElementById('btn-drive').classList.toggle('active-mode', mode === 'driving');
     // 네비 카드 아이콘 업데이트
@@ -1031,12 +1245,45 @@
   document.getElementById('btn-drive').addEventListener('click', () => setProfile('driving'));
 
   // ── 타일 수학 ──
+  // ★ 지도 타일은 정수 줌에만 존재한다.
+  //   줌을 부드럽게 만들면서 소수(17.5)를 그대로 넘겼더니
+  //   없는 타일을 부르게 되어 도로가 통째로 사라졌다.
+  //   타일 계산은 정수로 하고, 소수부는 캔버스를 확대해 표현한다.
+  function tileZ() { return Math.round(mapView.zoom); }
+  function zoomScale() { return Math.pow(2, mapView.zoom - tileZ()); }
+
   function latLngToTilePixel(lat, lng, z) {
     const n = Math.pow(2, z);
     const tx = (lng + 180) / 360 * n;
     const latRad = lat * Math.PI / 180;
     const ty = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
     return { tx, ty };
+  }
+
+  // ══════════════════════════════════════════
+  //  지도를 진행 방향으로 돌린다
+  // ══════════════════════════════════════════
+  //  ★★ 전에는 **북쪽 고정**이었다. 나침반 값은 현재 위치의 부채꼴을
+  //    돌리는 데만 썼다. 그런데 화면을 쿼터뷰로 기울여 놓았으므로
+  //    '화면 위쪽 = 앞' 으로 읽히는데, 실제로는 북쪽이었다.
+  //    남쪽으로 가면 경로선이 발밑으로 뻗는다.
+  //    안경이 머리에 붙어 있는 만큼 이건 바로 방향 착각이 된다.
+  //
+  //  ★ 진행 방향이 화면 위로 오게 돌린다 (티맵·네이버와 같은 방식).
+  //  ※ 갑자기 홱 돌면 멀미가 난다. 매 프레임 조금씩 따라가게 한다.
+  //  ※ 방향을 모를 때는 돌리지 않는다 — 엉뚱하게 돌아간 지도는
+  //    안 돌아간 지도보다 나쁘다.
+  let viewRot = 0;        // 지금 화면이 돌아간 각(라디안)
+
+  function updateViewRot() {
+    const deg = facingDeg();
+    if (deg == null) return;                 // 모르면 그대로 둔다
+    const target = -deg * Math.PI / 180;     // 그 방향이 위로 오게
+    let d = target - viewRot;
+    // 359도 → 1도 처럼 한 바퀴를 도는 대신 가까운 쪽으로
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    viewRot += d * 0.12;
   }
 
   // ── 원근 투영 (탑뷰 → 쿼터뷰) ──
@@ -1055,11 +1302,19 @@
   }
 
   function latLngToPixel(lat, lng) {
-    const { tx: cx, ty: cy } = latLngToTilePixel(mapView.centerLat, mapView.centerLng, mapView.zoom);
-    const { tx, ty } = latLngToTilePixel(lat, lng, mapView.zoom);
+    const { tx: cx, ty: cy } = latLngToTilePixel(mapView.centerLat, mapView.centerLng, tileZ());
+    const { tx, ty } = latLngToTilePixel(lat, lng, tileZ());
     // 현재위치가 POS_X, POS_Y (하단 1/3)에 오도록 오프셋
-    const fx = (tx - cx) * TILE_SIZE + POS_X;
-    const fy = (ty - cy) * TILE_SIZE + POS_Y;
+    let fx = (tx - cx) * TILE_SIZE + POS_X;
+    let fy = (ty - cy) * TILE_SIZE + POS_Y;
+    // ★ 내 자리를 중심으로 돌린다. 기울이기(proj)는 그 뒤에 한다 —
+    //   순서가 바뀌면 원근이 엉뚱한 축으로 걸린다.
+    if (viewRot) {
+      const dx = fx - POS_X, dy = fy - POS_Y;
+      const c = Math.cos(viewRot), sn = Math.sin(viewRot);
+      fx = POS_X + dx * c - dy * sn;
+      fy = POS_Y + dx * sn + dy * c;
+    }
     return proj(fx, fy);
   }
 
@@ -1068,7 +1323,14 @@
     if (animFrame) cancelAnimationFrame(animFrame);
     function loop() {
       pulsePhase = (pulsePhase + 0.025) % 1;
+      updateViewRot();
       // 카메라 각도 부드럽게 전환 (탑뷰 → 쿼터뷰)
+      // 줌도 부드럽게 따라간다
+      if (Math.abs(mapView.zoom - zoomTarget) > 0.002) {
+        mapView.zoom += (zoomTarget - mapView.zoom) * 0.18;
+      } else {
+        mapView.zoom = zoomTarget;
+      }
       if (Math.abs(mapView.pitch - pitchTarget) > 0.001) {
         mapView.pitch += (pitchTarget - mapView.pitch) * 0.045;
       } else {
@@ -1087,18 +1349,28 @@
   function renderMap() {
     ctx.clearRect(0, 0, 600, 600);
 
-    const z = mapView.zoom;
+    const z = tileZ();
     const { tx: cx, ty: cy } = latLngToTilePixel(mapView.centerLat, mapView.centerLng, z);
+
+    // 소수 줌은 화면을 확대해서 표현한다 (타일은 정수 줌만 있다)
+    ctx.save();
+    const sc = zoomScale();
+    if (Math.abs(sc - 1) > 0.001) {
+      ctx.translate(POS_X, POS_Y);
+      ctx.scale(sc, sc);
+      ctx.translate(-POS_X, -POS_Y);
+    }
 
     // 벡터 도로선 (Mapbox Streets MVT → 흰 선, 검정=투명)
     drawRoads(cx, cy);
 
     // 경로선 (Meta 스타일 - 얇고 선명한 파란선)
     if (routeCoords.length > 1) {
-      // 외곽 글로우
+      // ★ 경로선은 화면에서 가장 중요한 선이다. 도로보다 확실히 위에 보여야 한다.
+      //   외곽 번짐 (넓게, 그러나 도로와 섞이지 않게 색을 확실히)
       ctx.beginPath();
-      ctx.strokeStyle = 'rgba(74,158,255,0.18)';
-      ctx.lineWidth = 9; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.strokeStyle = 'rgba(60,255,140,0.40)';   // 초록 번짐
+      ctx.lineWidth = 22; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
       let started = false;
       routeCoords.forEach(pt => {
         const p = latLngToPixel(pt.lat, pt.lng);
@@ -1108,11 +1380,13 @@
       });
       ctx.stroke();
 
-      // 메인선 (얇고 선명)
+      // 메인선 (굵고 선명)
       ctx.beginPath();
-      ctx.strokeStyle = '#4a9eff';
-      ctx.lineWidth = 4; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      ctx.shadowColor = 'rgba(74,158,255,0.9)'; ctx.shadowBlur = 8;
+      // ★ 파랑은 흰 도로 위에 얹히면 빛이 섞여 묻혔다 (더하기 화면).
+      //   초록은 흰색과 가장 멀리 떨어져 있어 겹쳐도 구분된다.
+      ctx.strokeStyle = '#3cff8c';
+      ctx.lineWidth = 11; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.shadowColor = 'rgba(60,255,140,1)'; ctx.shadowBlur = 14;
       started = false;
       routeCoords.forEach(pt => {
         const p = latLngToPixel(pt.lat, pt.lng);
@@ -1141,6 +1415,8 @@
       const { x, y } = latLngToPixel(currentPos.lat, currentPos.lng);
       drawCurrentPos(x, y);
     }
+
+    ctx.restore();   // 소수 줌 확대 해제
   }
 
   function drawDestPin(x, y) {
@@ -1211,6 +1487,51 @@
   }
 
   function drawCurrentPos(x, y) {
+    // ★ 방향 부채꼴 — 내가 어느 쪽을 보고 있는지.
+    //   이게 없으면 점만 찍혀서 어느 쪽으로 첫걸음을 떼야 할지 알 수 없다.
+    const deg = facingDeg();
+    if (deg == null) {
+      // ★ 방향을 못 얻었으면 그렇다고 보여준다.
+      //   아무것도 안 그리면 '방향이 없는 것' 과 '고장난 것' 을 구분할 수 없다.
+      ctx.save();
+      ctx.beginPath(); ctx.arc(x, y, 30, 0, Math.PI * 2);
+      ctx.setLineDash([5, 5]);
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (deg != null) {
+      // ★ 지도가 진행 방향으로 돌아갔으므로, 부채꼴도 같은 만큼 돌려야
+      //   화면에서 위를 가리킨다. (안 돌리면 지도와 부채꼴이 따로 논다)
+      const rad = (deg - 90) * Math.PI / 180 + viewRot;
+      const spread = 0.42;                       // 부채꼴 폭 (약 48도)
+      const R = 46;
+      const g = ctx.createRadialGradient(x, y, 8, x, y, R);
+      g.addColorStop(0, 'rgba(92,200,255,0.85)');
+      g.addColorStop(1, 'rgba(92,200,255,0)');
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.arc(x, y, R, rad - spread, rad + spread);
+      ctx.closePath();
+      ctx.fillStyle = g;
+      ctx.fill();
+
+      // 끝에 화살촉 하나 — 부채꼴만으로는 방향이 덜 또렷하다
+      const ax = x + Math.cos(rad) * (R - 6);
+      const ay = y + Math.sin(rad) * (R - 6);
+      ctx.save();
+      ctx.translate(ax, ay);
+      ctx.rotate(rad);
+      ctx.beginPath();
+      ctx.moveTo(9, 0); ctx.lineTo(-6, -6); ctx.lineTo(-6, 6);
+      ctx.closePath();
+      ctx.fillStyle = '#5cc8ff';
+      ctx.shadowColor = 'rgba(92,200,255,0.9)'; ctx.shadowBlur = 10;
+      ctx.fill(); ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+
     // 외부 펄스 링
     const pulseR = 14 + pulsePhase * 22;
     const pulseAlpha = (1 - pulsePhase) * 0.3;
@@ -1225,15 +1546,16 @@
 
     // 내부 파란/보라 그라디언트 원 (Meta 스타일)
     const grad = ctx.createRadialGradient(x-2, y-2, 1, x, y, 9);
-    grad.addColorStop(0, '#a78bfa');
-    grad.addColorStop(1, '#3b82f6');
+    grad.addColorStop(0, '#c4a8ff');
+    grad.addColorStop(1, '#5cc8ff');
     ctx.beginPath(); ctx.arc(x, y, 9, 0, Math.PI*2);
     ctx.fillStyle = grad; ctx.fill();
   }
 
   // ── 줌 (키보드 전용) ──
-  function zoomIn()  { if (mapView.zoom < ZOOM_MAX) mapView.zoom++; }
-  function zoomOut() { if (mapView.zoom > ZOOM_MIN) mapView.zoom--; }
+  // 0.5 단계로 목표만 바꾸고, 실제 줌은 매 프레임 그리로 다가간다
+  function zoomIn()  { zoomTarget = Math.min(ZOOM_MAX, zoomTarget + 0.5); }
+  function zoomOut() { zoomTarget = Math.max(ZOOM_MIN, zoomTarget - 0.5); }
 
   // ── 경로 이탈 감지 ──
   function distToRoute(lat, lng) {
@@ -1245,6 +1567,100 @@
     }
     return minD;
   }
+  // ══════════════════════════════════════════
+  //  경로 위 어디까지 왔는가 — 진행률
+  // ══════════════════════════════════════════
+  //  ★★ 차에서 써보고 알았다. 전에는 '다음 회전점까지 직선거리' 만 봤다.
+  //
+  //    시속 60km 면 초당 17m 다. 위치가 5초마다 오면 한 번에 83m 를 건너뛴다.
+  //    그런데 스텝 전진 조건이 '25m 안에 들어오면' 이었다 —
+  //    회전점을 지나가도 그 창에 한 번도 안 걸려서 안내가 영영 안 넘어갔다.
+  //    남은 거리도 직선이라 화면의 경로선과 눈에 띄게 어긋났다.
+  //
+  //  ★ 그래서 현재 위치를 **경로선에 투영**한다.
+  //    '경로의 몇 미터 지점에 있는가' 하나를 알면
+  //    지나쳤는지 · 다음 회전까지 몇 m · 총 몇 m 남았는지가 전부 나온다.
+  //    창을 통과했는지에 기대지 않으므로 속도와 무관하다.
+  let routeCum = [];      // 각 경로점까지의 누적 거리(m)
+  let stepAlong = [];     // 각 안내지점이 경로의 몇 m 지점인가
+  let alongNow = 0;       // 지금 내가 있는 지점(m)
+  let projHint = 0;       // 지난번에 붙었던 자리 (여기 근처부터 찾는다)
+  let routeTotalM = 0;
+  let routeDurationS = 0; // 경로가 알려준 총 소요(초)
+
+  function metersBetween(a, b) {
+    const dy = (b.lat - a.lat) * 111320;
+    const dx = (b.lng - a.lng) * 111320 * Math.cos(a.lat * Math.PI / 180);
+    return Math.hypot(dx, dy);
+  }
+
+  /// 경로가 새로 들어오면 한 번 계산해 둔다
+  function buildRouteIndex(durationSec) {
+    routeCum = [0];
+    for (let i = 1; i < routeCoords.length; i++) {
+      routeCum[i] = routeCum[i - 1] + metersBetween(routeCoords[i - 1], routeCoords[i]);
+    }
+    routeTotalM = routeCum.length ? routeCum[routeCum.length - 1] : 0;
+    routeDurationS = durationSec || 0;
+    projHint = 0;
+    alongNow = 0;
+    // 안내지점을 '경로 위 거리' 로 옮겨둔다. 여기서는 전체를 훑어야 한다.
+    stepAlong = routeSteps.map(st => {
+      const loc = st.maneuver.location;
+      return projectOnRoute(loc[1], loc[0], 0, routeCoords.length - 1).along;
+    });
+  }
+
+  /// 한 점을 경로선에 투영한다 → { along(m), offset(m), idx }
+  //  ※ 전체를 매번 훑지 않는다. 지난 자리 근처만 본다 —
+  //    회차로처럼 경로가 자기 위로 겹칠 때 엉뚱한 곳에 붙는 것도 이걸로 막는다.
+  //  ※ 거리는 그 점 기준 평면 근사로 잰다. 경도에 cos(위도) 를 곱해야
+  //    가로세로 자가 같아진다 (전에는 안 곱해서 투영점이 치우쳤다).
+  function projectOnRoute(lat, lng, from, to) {
+    if (routeCoords.length < 2) return { along: 0, offset: Infinity, idx: 0 };
+    const lo = (from != null) ? from : Math.max(0, projHint - 30);
+    const hi = (to != null) ? to : Math.min(routeCoords.length - 1, projHint + 600);
+    const kx = 111320 * Math.cos(lat * Math.PI / 180), ky = 111320;
+
+    let best = { along: routeCum[lo] || 0, offset: Infinity, idx: lo };
+    for (let i = lo; i < hi; i++) {
+      const a = routeCoords[i], b = routeCoords[i + 1];
+      const ax = (a.lng - lng) * kx, ay = (a.lat - lat) * ky;
+      const bx = (b.lng - lng) * kx, by = (b.lat - lat) * ky;
+      const dx = bx - ax, dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      let t = 0;
+      if (len2 > 0) t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len2));
+      const px = ax + t * dx, py = ay + t * dy;
+      const off = Math.hypot(px, py);
+      if (off < best.offset) {
+        best = { along: (routeCum[i] || 0) + Math.sqrt(len2) * t, offset: off, idx: i };
+      }
+    }
+    return best;
+  }
+
+  /// 거리를 사람이 읽는 꼴로
+  function fmtDist(m) {
+    if (m >= 1000) return (m / 1000).toFixed(1) + 'km';
+    // ★ 차에서는 1m 단위가 의미 없다. 10m 로 끊는다.
+    if (navProfile === 'driving') return Math.round(m / 10) * 10 + 'm';
+    return Math.round(m) + 'm';
+  }
+
+  // ══════════════════════════════════════════
+  //  걸을 때와 탈 때의 차이는 여기서만 정한다
+  // ══════════════════════════════════════════
+  //  ※ 전에는 도보 값 하나로 둘 다 돌렸다. 그래서 '모드가 있으나 마나' 였다.
+  function trackOpts() {
+    return navProfile === 'driving'
+      // 차는 초당 17m 다. 5초 묵은 위치는 83m 뒤의 이야기다.
+      ? { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
+      : { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 };
+  }
+  function offRouteLimitM() { return navProfile === 'driving' ? 60 : 30; }
+  function arriveLimitM()   { return navProfile === 'driving' ? 60 : 30; }
+
   function pointToSegmentDist(lat, lng, a, b) {
     // 단순 거리 근사 (km)
     const dx = b.lng - a.lng, dy = b.lat - a.lat;
@@ -1254,77 +1670,120 @@
   }
 
   // ── GPS 추적 ──
+  //  ★ 위치가 올 때마다 하는 일은 하나뿐이다: **경로 위 내 자리를 갱신한다.**
+  //    나머지(도착·ETA·다음 회전·이탈)는 전부 그 값에서 나온다.
+  let offStreak = 0;        // 연달아 경로 밖으로 나온 횟수
+  let lastRerouteAt = 0;
+
   function startTracking(dest) {
     if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    offStreak = 0;
+    lastRerouteAt = 0;
+
     watchId = navigator.geolocation.watchPosition(pos => {
       currentPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      if (pos.coords.heading != null) currentHeading = pos.coords.heading;
+      if (pos.coords.heading != null) { currentHeading = pos.coords.heading; lastGpsHeadingAt = Date.now(); }
       mapView.centerLat = currentPos.lat;
       mapView.centerLng = currentPos.lng;
-      // 마지막 위치 캐시
       try { localStorage.setItem('ko_navi_last_pos', JSON.stringify(currentPos)); } catch {}
       setOffline(false);
 
-      const remaining = getDistanceKm(currentPos.lat, currentPos.lng, dest.lat, dest.lng);
-      if (remaining < 0.03) {
-        navigator.geolocation.clearWatch(watchId);
+      if (routeCoords.length < 2) return;
+
+      // ── 경로 위 내 자리 ──
+      const pr = projectOnRoute(currentPos.lat, currentPos.lng);
+      // ★ 뒤로는 안 간다. GPS 가 튀어도 진행이 되돌아가면 안내가 춤춘다.
+      if (pr.along > alongNow) { alongNow = pr.along; projHint = pr.idx; }
+      const remainM = Math.max(0, routeTotalM - alongNow);
+
+      // ── 도착 ──
+      if (remainM < arriveLimitM()) {
+        navigator.geolocation.clearWatch(watchId); watchId = null;
+        // ★ 도착했으면 이어갈 것이 없다. 안 지우면 다시 열 때 또 안내한다.
+        try { localStorage.removeItem('navi.active'); } catch (e) {}
+        letScreenSleep();
         speak('목적지에 도착했습니다');
         document.getElementById('turn-arrow').textContent = '🏁';
         document.getElementById('turn-dist').textContent = '도착!';
         document.getElementById('turn-text').textContent = dest.name;
         document.getElementById('nav-eta').textContent = '도착';
+        document.getElementById('nav-dist').textContent = '0.0';
         return;
       }
 
-      const etaMin = Math.round(remaining / 0.067);
-      document.getElementById('nav-eta').textContent = etaMin;
-      document.getElementById('nav-dist').textContent = remaining.toFixed(1);
+      // ── 남은 거리·시간 ──
+      //  ★ 전에는 목적지까지 직선거리와 4km/h 고정이었다.
+      //    드라이브에서 5km 가 75분으로 떴다. 경로가 알려준 소요시간을
+      //    남은 비율로 환산한다. (교통정보가 반영된 값이다)
+      document.getElementById('nav-dist').textContent = (remainM / 1000).toFixed(1);
+      let etaSec;
+      if (routeDurationS > 0 && routeTotalM > 0) {
+        etaSec = routeDurationS * (remainM / routeTotalM);
+      } else {
+        etaSec = remainM / (navProfile === 'driving' ? 11.1 : 1.1);  // 40km/h · 4km/h
+      }
+      document.getElementById('nav-eta').textContent = Math.max(1, Math.round(etaSec / 60));
 
-      // 턴 스텝 업데이트
-      if (routeSteps.length > 0 && currentStepIndex < routeSteps.length - 1) {
-        const next = routeSteps[currentStepIndex + 1];
-        const loc = next.maneuver.location;
-        const d = getDistanceKm(currentPos.lat, currentPos.lng, loc[1], loc[0]);
-        if (d < 0.025) {
-          currentStepIndex++;
-          updateStepUI(routeSteps[currentStepIndex]);
-        } else {
-          document.getElementById('turn-dist').textContent =
-            d < 1 ? `${Math.round(d*1000)}m` : `${d.toFixed(1)}km`;
-          announceTurn(next, d);   // 200m / 50m / 즉시 음성 안내
-        }
+      // ── 다음 회전 ──
+      //  ★ '창을 통과했는가' 로 판단하지 않는다. 지났으면 지난 것이다.
+      //    여러 개를 한 번에 지나쳤어도 while 이 따라잡는다.
+      let idx = currentStepIndex;
+      while (idx < routeSteps.length - 1 && stepAlong[idx + 1] <= alongNow + 5) idx++;
+      if (idx !== currentStepIndex) { currentStepIndex = idx; updateStepUI(routeSteps[idx]); }
+
+      const next = routeSteps[currentStepIndex + 1];
+      if (next) {
+        const dM = Math.max(0, (stepAlong[currentStepIndex + 1] || 0) - alongNow);
+        document.getElementById('turn-dist').textContent = fmtDist(dM);
+        announceTurn(next, dM / 1000);
       }
 
-      // 경로 이탈 감지 (30m 이상 벗어나면 즉시 재경로)
-      const offRoute = distToRoute(currentPos.lat, currentPos.lng);
-      if (offRoute > 0.03 && routeCoords.length > 1 && !isRerouting) {
+      // ── 경로 이탈 ──
+      //  ★ 문턱을 넘었다고 바로 다시 잡지 않는다.
+      //    도심 GPS 는 30~60m 씩 튄다. 전에는 스로틀이 없어서
+      //    고층 빌딩 아래를 지나면 재탐색이 계속 돌 수 있었다.
+      //    (rerouteTimer 변수가 있었지만 어디에서도 값을 넣지 않는 죽은 코드였다)
+      if (pr.offset > offRouteLimitM()) offStreak++; else offStreak = 0;
+      const sinceReroute = Date.now() - lastRerouteAt;
+      if (offStreak >= 2 && !isRerouting && sinceReroute > 15000) {
         isRerouting = true;
+        lastRerouteAt = Date.now();
+        offStreak = 0;
         document.getElementById('turn-dist').textContent = '재경로...';
         speak('경로를 다시 탐색합니다');
         fetchRoute(currentPos, dest).then(route => {
-          if (route) {
+          if (route && route.geometry && route.geometry.coordinates.length > 1) {
             routeCoords = route.geometry.coordinates.map(([lng, lat]) => ({ lat, lng }));
             routeSteps = route.legs[0].steps;
             currentStepIndex = 0;
-            spokenDistBucket = null;
+            spokenDistBucket = null; spokenBucketVal = null;
+            buildRouteIndex(route.duration);
             updateStepUI(routeSteps[0]);
           }
           isRerouting = false;
         }).catch(() => { isRerouting = false; });
       }
     }, err => {
+      // ★ 조용히 멈추지 않는다. 화면이 얼어붙었는지 내가 멈춘 건지
+      //   사용자가 구분할 수 있어야 한다.
       console.warn(err.message);
       setOffline(true);
-    }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 });
+      document.getElementById('turn-dist').textContent = '위치 안 잡힘';
+    }, trackOpts());
   }
 
   function stopNav() {
+    // 안내를 끝냈으면 이어갈 것이 없다
+    try { localStorage.removeItem('navi.active'); } catch (e) {}
+    letScreenSleep();
     if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
-    clearTimeout(rerouteTimer);
     if ('speechSynthesis' in window) speechSynthesis.cancel();
     stopRenderLoop();
-    isRerouting = false; spokenDistBucket = null;
+    isRerouting = false; spokenDistBucket = null; spokenBucketVal = null;
+    routeCum = []; stepAlong = []; alongNow = 0; projHint = 0;
+    routeTotalM = 0; routeDurationS = 0; offStreak = 0;
     mapView.pitch = 0; pitchTarget = 0;
+    viewRot = 0;
     routeCoords = []; routeSteps = []; selectedDest = null; currentHeading = null;
   }
 
@@ -1335,6 +1794,7 @@
     document.getElementById('turn-text').textContent = getStepText(step);
     document.getElementById('turn-dist').textContent = '--';
     spokenDistBucket = null;   // 새 스텝 → 안내 버킷 초기화
+    spokenBucketVal = null;
   }
 
   // ── 음성 안내 (TTS) ──
@@ -1355,6 +1815,18 @@
     const type = step.maneuver.type, mod = step.maneuver.modifier || '';
     if (type === 'arrive') return '목적지에 도착했습니다';
     if (type === 'depart') return '안내를 시작합니다';
+    // ★ 자동차에만 나오는 것들 (TMAP 자동차 회전코드 101~116)
+    if (type === 'ramp') {
+      if (mod === 'left')  return '왼쪽 고속도로 입구로 진입하세요';
+      if (mod === 'right') return '오른쪽 고속도로 입구로 진입하세요';
+      return '고속도로로 진입하세요';
+    }
+    if (type === 'exit') {
+      if (mod === 'left')  return '왼쪽 출구로 나가세요';
+      if (mod === 'right') return '오른쪽 출구로 나가세요';
+      return '출구로 나가세요';
+    }
+    if (mod === 'pturn') return 'P턴 하세요';
     if (mod === 'left') return '좌회전하세요';
     if (mod === 'right') return '우회전하세요';
     if (mod === 'slight left') return '좌측 방향입니다';
@@ -1365,26 +1837,44 @@
     return '직진하세요';
   }
 
-  // 거리별 사전 안내 (200m / 50m / 즉시)
+  //  ══════════════════════════════════════════
+  //   거리별 사전 안내 — 차와 걸음은 필요한 거리가 다르다
+  //  ══════════════════════════════════════════
+  //  ★★ 전에는 둘 다 200m / 50m / 즉시였다.
+  //    시속 60km 면 200m 는 **12초**다. 차선을 바꿀 시간이 안 된다.
+  //    티맵·네이버가 1km 부터 알려주는 이유가 이것이다.
+  //  ★ 그리고 한 번 지나간 단계로 되돌아가지 않는다.
+  //    전에는 신호등에서 GPS 가 앞뒤로 흔들리면
+  //    "200미터 앞 좌회전" 이 다시 나왔다.
+  let spokenBucketVal = null;
+
   function announceTurn(step, distKm) {
     if (!step) return;
     const m = distKm * 1000;
-    let bucket = null;
-    if (m <= 20) bucket = 'now';
-    else if (m <= 50) bucket = '50';
-    else if (m <= 200) bucket = '200';
-    if (!bucket || bucket === spokenDistBucket) return;
-    spokenDistBucket = bucket;
+    const car = navProfile === 'driving';
+    const marks = car ? [1000, 500, 300, 100, 40] : [200, 50, 20];
+
+    let n = null;
+    for (const mk of marks) if (m <= mk) n = mk;   // 가장 작은 해당 칸
+    if (n == null) return;
+    if (spokenBucketVal != null && n >= spokenBucketVal) return;  // 뒤로 안 간다
+    spokenBucketVal = n;
+    spokenDistBucket = String(n);
 
     const action = getStepVoice(step);
-    if (bucket === 'now')      speak(action);
-    else if (bucket === '50')  speak('50미터 앞 ' + action);
-    else                       speak('200미터 앞 ' + action);
+    const nowMark = car ? 40 : 20;
+    if (n <= nowMark)        speak(action);
+    else if (n >= 1000)      speak('1킬로미터 앞 ' + action);
+    else                     speak(n + '미터 앞 ' + action);
   }
+
   function getStepText(step) {
     const type = step.maneuver.type, mod = step.maneuver.modifier || '', name = step.name || '';
     if (type === 'depart') return '출발';
     if (type === 'arrive') return '목적지 도착';
+    if (type === 'ramp') return `고속도로 진입${name ? ' · '+name : ''}`;
+    if (type === 'exit') return `출구${name ? ' · '+name : ''}`;
+    if (mod === 'pturn') return 'P턴';
     if (mod === 'left') return `좌회전${name ? ' · '+name : ''}`;
     if (mod === 'right') return `우회전${name ? ' · '+name : ''}`;
     if (mod === 'slight left') return `좌측 방향${name ? ' · '+name : ''}`;
@@ -1395,6 +1885,9 @@
   function getStepArrow(step) {
     const type = step.maneuver.type, mod = step.maneuver.modifier || '';
     if (type === 'arrive') return '🏁';
+    if (type === 'ramp')   return mod === 'left' ? '↰' : '↱';
+    if (type === 'exit')   return mod === 'left' ? '↖' : '↗';
+    if (mod === 'pturn')   return '↺';
     if (mod === 'left') return '←'; if (mod === 'right') return '→';
     if (mod === 'slight left') return '↖'; if (mod === 'slight right') return '↗';
     if (mod === 'uturn') return '↩';
@@ -1414,6 +1907,7 @@
 
   // ── 키보드 ──
   document.addEventListener('keydown', e => {
+    startCompass();   // 첫 조작에서 나침반 권한을 얻는다 (자동 호출은 막혀 있다)
     const active = document.querySelector('.screen.active')?.id;
 
     if (active === 'screen-home') {
@@ -1444,13 +1938,18 @@
 
     if (active === 'screen-nav') {
       if (e.key === 'Escape' || e.key === 'ArrowLeft') { stopNav(); showScreen('screen-home'); focusHome(focusIndex); e.preventDefault(); }
-      else if (e.key === '+' || e.key === '=') { zoomIn(); e.preventDefault(); }
-      else if (e.key === '-') { zoomOut(); e.preventDefault(); }
-      // 시점 전환: 탑뷰 ↔ 쿼터뷰
-      else if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter') {
+      // ★ 안경에는 키보드가 없다. 방향키와 Enter 만 들어온다.
+      //   전에는 줌이 +/- 에 걸려 있어서 안경에서는 아예 못 썼다.
+      //   걸을 때 시점보다 줌이 훨씬 자주 필요하므로 위/아래를 줌에 준다.
+      else if (e.key === 'ArrowUp')   { zoomIn();  e.preventDefault(); }
+      else if (e.key === 'ArrowDown') { zoomOut(); e.preventDefault(); }
+      // 시점 전환(위에서 보기 ↔ 비스듬히)은 핀치로
+      else if (e.key === 'Enter') {
         pitchTarget = pitchTarget > 0.5 ? 0 : 1;
         e.preventDefault();
       }
+      else if (e.key === '+' || e.key === '=') { zoomIn(); e.preventDefault(); }
+      else if (e.key === '-') { zoomOut(); e.preventDefault(); }
       // 음성 안내 on/off
       else if (e.key === 'ArrowRight') {
         voiceOn = !voiceOn;
@@ -1489,9 +1988,16 @@
   try { lastDestAt = parseInt(localStorage.getItem('navi.destAt')) || 0; } catch (e) {}
 
   function checkRelay() {
-    // 안내 중이거나 검색 중이면 건드리지 않는다
-    const home = document.getElementById('screen-home');
-    if (!home || !home.classList.contains('active')) return;
+    // ★ 안내 중에도 새 목적지가 오면 바로 그리로 바꾼다.
+    //   전에는 홈 화면일 때만 봤다. 그러면 안내가 한 번 시작된 뒤로는
+    //   폰에서 공유해도 안경이 통째로 무시했다 — 목적지를 바꾸려면
+    //   왼쪽 스와이프로 홈에 나갔다 와야 했다.
+    //   목적지를 보내는 것 자체가 "여기로 가겠다" 는 뜻이므로 바로 따른다.
+    //
+    //   다만 검색 화면에서는 건드리지 않는다. 사용자가 지금 직접
+    //   고르는 중인데 화면이 튀면 곤란하다.
+    const search = document.getElementById('screen-search-input');
+    if (search && search.classList.contains('active')) return;
 
     fetch(DEST_RELAY + '/dest', { cache: 'no-store' })
       .then(r => r.json())
@@ -1513,6 +2019,27 @@
   // ── 시작 ──
   buildHome();
   getLocation();
+  startCompass();
+
+  // ★ 안내 중에 앱이 닫혔다면 그대로 이어간다.
+  //   30분이 지났으면 이어가지 않는다 — 그때는 이미 다른 곳에 있을 것이다.
+  //   ※ 위치를 먼저 잡아야 경로를 계산할 수 있어서 조금 기다린다.
+  (function resumeNav() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem('navi.active') || 'null'); } catch (e) {}
+    if (!saved || !saved.dest || !saved.at) return;
+    if (Date.now() - saved.at > 30 * 60 * 1000) {
+      try { localStorage.removeItem('navi.active'); } catch (e) {}
+      return;
+    }
+    let waited = 0;
+    const t = setInterval(() => {
+      waited += 300;
+      if (currentPos) { clearInterval(t); startNav(saved.dest); }
+      else if (waited >= 9000) { clearInterval(t); startNav(saved.dest); }  // 위치가 늦어도 시도한다
+    }, 300);
+  })();
+
   checkRelay();
   setInterval(checkRelay, 5000);
 </script>
