@@ -4,6 +4,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
   <meta name="mrbd-web-app-capable" content="yes">
+  <!-- ══════════════════════════════════════════
+       ★★ 이걸 안 넣어서 하루에 두 번 헛돌았다.
+       ══════════════════════════════════════════
+       올린 건 분명히 올라갔는데 안경에서는 옛 화면이 그대로 떴다.
+       그래서 "고친 게 안 먹는다" 고 판단하고 **멀쩡한 코드를 다시 팠다.**
+       ※ 안 되는 것 같으면 **무엇이 실행되고 있는지부터** 확인한다.
+         고친 코드가 실행조차 안 되고 있을 수 있다.
+       아래 두 줄과 화면 구석의 판 번호가 그 확인을 대신해준다. -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
   <title>KO-Navi</title>
   <!-- 안경 앱 격자에 쓰이는 아이콘.
        문서: Unicode 기호나 52x52 이상 PNG. SVG 는 안 된다. -->
@@ -25,6 +35,11 @@
     .title { font-size: 22px; font-weight: 700; color: #fff; text-align: center; letter-spacing: -0.5px; }
     .title span { color: #5cc8ff; }
 
+    .build-tag {
+      position: absolute; top: 8px; right: 12px;
+      font-size: 14px; color: #7d8fa0; letter-spacing: 0.5px;
+      z-index: 3; pointer-events: none;
+    }
     .location-box {
       background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
       border-radius: 12px; padding: 10px 14px;
@@ -247,6 +262,10 @@
 <!-- 홈 -->
 <div id="screen-home" class="screen active">
   <div class="title">KO-<span>Navi</span></div>
+  <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
+       숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
+  <div class="build-tag" id="build-tag">v3 · 08-27</div>
+
   <div class="location-box">
     <div class="label">현재 위치</div>
     <div class="value" id="current-location">위치 확인 중...</div>
