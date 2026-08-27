@@ -502,7 +502,9 @@
   //      ④ 캐시(오프라인) 경로로 안내 중
   //      ⑤ 정상 — 회전 안내를 보여준다
   //  ※ 상태가 있으면 회전 안내를 **숨긴다.** 둘이 같이 뜨면 또 겹친다.
-  let navFlags = { gpsLost: false, routeLoading: false, routeFailed: false, offline: false };
+  //  ※ approach = 아직 경로에 못 붙은 상태. 회전 안내를 띄워봤자
+  //    아직 그 회전을 할 수 없으므로 이걸 먼저 말한다.
+  let navFlags = { gpsLost: false, routeLoading: false, routeFailed: false, offline: false, approach: false };
 
   function renderNavStatus() {
     const el = document.getElementById('nav-status');
@@ -510,6 +512,7 @@
     if (!el || !banner) return;
     let msg = '';
     if (navFlags.gpsLost)           msg = '위치 안 잡힘 — 하늘이 보이는 곳으로';
+    else if (navFlags.approach)     msg = `점선 따라 ${fmtDist(linkDistM)} — 경로로 나가세요`;
     else if (navFlags.routeFailed)  msg = '경로를 못 받았습니다';
     else if (navFlags.routeLoading) msg = '경로 계산 중…';
     else if (navFlags.offline)      msg = '저장해둔 경로로 안내 중';
@@ -1150,7 +1153,7 @@
     //  ★ 안내 화면의 상태는 전부 상태 줄 하나로 낸다.
     //    showLoading 은 검색 화면에서만 쓴다 — 안내 중에 가운데를 덮으면
     //    지도도 경로도 못 본다.
-    navFlags = { gpsLost: false, routeLoading: true, routeFailed: false, offline: false };
+    navFlags = { gpsLost: false, routeLoading: true, routeFailed: false, offline: false, approach: false };
     renderNavStatus();
     // 조작법을 잠깐 보여준다 (처음 쓰는 사람은 종료하는 법도 모른다)
     const help = document.getElementById('nav-help');
@@ -1610,6 +1613,32 @@
       ctx.stroke();
     }
 
+    //  ── 접근 구간 점선 ──
+    //  ※ 경로선 **다음에** 그린다. 경로선 아래로 깔면 겹치는 부분에서
+    //    초록에 묻혀 안 보인다. 다만 현재 위치보다는 먼저 그린다.
+    if (linkTarget && currentPos) {
+      const a = latLngToPixel(currentPos.lat, currentPos.lng);
+      const b = latLngToPixel(linkTarget.lat, linkTarget.lng);
+      if (a.ok !== false && b.ok !== false) {
+        ctx.save();
+        //  ★ 점선 간격을 넉넉히 (12/10). 더하기 화면에서 촘촘한 점선은
+        //    번져서 실선으로 보인다 — 그러면 '길' 로 오해한다.
+        ctx.setLineDash([12, 10]);
+        ctx.lineCap = 'butt';
+        //  경로선(초록)과 다른 색이어야 '길이 아니다' 가 읽힌다.
+        ctx.strokeStyle = '#ffd27a';
+        ctx.lineWidth = 7;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        //  붙어야 할 지점에 작은 고리를 찍는다 — 선만 있으면 어디까지인지 모른다
+        ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(b.x, b.y, 9, 0, Math.PI * 2);
+        ctx.lineWidth = 4; ctx.stroke();
+        ctx.restore();
+      }
+    }
+
     // 목적지 핀 or 화면 밖이면 가장자리 방향 인디케이터
     if (selectedDest) {
       const { x, y } = latLngToPixel(selectedDest.lat, selectedDest.lng);
@@ -1818,7 +1847,11 @@
     alongNow = 0;
     // 안내지점을 '경로 위 거리' 로 옮겨둔다. 여기서는 전체를 훑어야 한다.
     stepAlong = routeSteps.map(st => {
-      const loc = st.maneuver.location;
+      //  ★ 스텝에 회전 지점이 없을 수 있다 (옛 버전이 남긴 캐시 경로 등).
+      //    여기서 터지면 **안내가 통째로 죽는다** — 화면은 '경로 계산 중' 에서
+      //    영영 멈춘다. 한 스텝 못 읽는 것보다 그게 훨씬 나쁘다.
+      const loc = st && st.maneuver && st.maneuver.location;
+      if (!loc) return 0;
       return projectOnRoute(loc[1], loc[0], 0, routeCoords.length - 1).along;
     });
   }
@@ -1853,6 +1886,34 @@
   }
 
   /// 거리를 사람이 읽는 꼴로
+  //  ══════════════════════════════════════════
+  //   경로까지 데려다주는 점선 (접근 구간)
+  //  ══════════════════════════════════════════
+  //  ★★ 왜 필요한가
+  //    건물 안이나 주차장에서 안내를 켜면 나는 도로 위에 있지 않다.
+  //    그러면 화면에 **경로선은 저 멀리 떠 있고 나는 아무 데나 찍혀** 있다.
+  //    "어느 쪽으로 나가야 하나" 를 화면이 말해주지 않는다.
+  //    티맵·네이버가 이 구간을 점선으로 이어주는 게 그래서다.
+  //
+  //  ※ 실선으로 긋지 않는다. 이 구간은 **길이 아니다** —
+  //    건물을 통과하거나 담을 넘는 직선일 수 있다.
+  //    실선으로 그으면 "이리로 가라" 로 읽힌다. 점선은 "저기로 붙어라" 다.
+  //    모양이 곧 뜻이므로 여기서 아끼면 안 된다.
+  let linkTarget = null;    // {lat,lng} — 경로 위 붙어야 할 지점
+  let linkDistM  = 0;       // 거기까지 직선 거리
+
+  /// 경로를 따라 mAlong 미터 지점의 좌표. 없으면 null.
+  function pointAlongRoute(mAlong) {
+    if (routeCoords.length < 2 || !routeCum.length) return null;
+    const m = Math.max(0, Math.min(mAlong, routeTotalM));
+    let i = 1;
+    while (i < routeCum.length - 1 && routeCum[i] < m) i++;
+    const segLen = routeCum[i] - routeCum[i-1];
+    const t = segLen > 0 ? (m - routeCum[i-1]) / segLen : 0;
+    const a = routeCoords[i-1], b = routeCoords[i];
+    return { lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t };
+  }
+
   function fmtDist(m) {
     if (m >= 1000) return (m / 1000).toFixed(1) + 'km';
     // ★ 차에서는 1m 단위가 의미 없다. 10m 로 끊는다.
@@ -1910,9 +1971,35 @@
 
       // ── 경로 위 내 자리 ──
       const pr = projectOnRoute(currentPos.lat, currentPos.lng);
-      // ★ 뒤로는 안 간다. GPS 가 튀어도 진행이 되돌아가면 안내가 춤춘다.
-      if (pr.along > alongNow) { alongNow = pr.along; projHint = pr.idx; }
-      const remainM = Math.max(0, routeTotalM - alongNow);
+
+      //  ★★ 여기 구멍이 있었다.
+      //    경로에서 아무리 멀리 떨어져 있어도 진행률을 그대로 올렸다.
+      //    건물 안에서 켰는데 경로가 그 건물 근처를 두 번 지나가면,
+      //    가장 가까운 점이 **뒤쪽 구간이 아니라 앞쪽 구간**으로 잡혀
+      //    진행이 통째로 앞으로 튄다 — 회전 안내가 몇 개씩 건너뛴다.
+      //  ★ 경로에 붙어 있을 때만 진행으로 친다.
+      const ONROUTE_M = 25;
+      const onRoute = pr.offset <= ONROUTE_M;
+      if (onRoute && pr.along > alongNow) { alongNow = pr.along; projHint = pr.idx; }
+
+      //  ★ 떨어져 있으면 '경로 위 지금 자리' 까지 점선으로 잇는다.
+      //    처음엔 alongNow 가 0 이므로 자연히 **출발 지점**을 가리킨다.
+      //    가다가 벗어나면 그 시점의 자리를 가리킨다 — 규칙 하나로 둘 다 된다.
+      setNavFlag('approach', !onRoute && alongNow < 5);   // 출발 전 접근 구간만
+      if (onRoute) {
+        linkTarget = null; linkDistM = 0;
+      } else {
+        linkTarget = pointAlongRoute(alongNow);
+        linkDistM  = linkTarget
+          ? metersBetween(currentPos, linkTarget)
+          : 0;
+      }
+
+      //  ★ 남은 거리에 접근 구간을 더한다.
+      //    안 더하면 건물 안에서 '200m' 라고 떠 있다가
+      //    밖에 나오는 순간 '250m' 로 늘어난다. 늘어나는 남은 거리는
+      //    고장으로 보인다.
+      const remainM = Math.max(0, routeTotalM - alongNow) + linkDistM;
 
       // ── 도착 ──
       if (remainM < arriveLimitM()) {
@@ -2002,7 +2089,8 @@
     isRerouting = false; spokenDistBucket = null; spokenBucketVal = null;
     routeCum = []; stepAlong = []; alongNow = 0; projHint = 0;
     routeTotalM = 0; routeDurationS = 0; offStreak = 0;
-    navFlags = { gpsLost: false, routeLoading: false, routeFailed: false, offline: false };
+    navFlags = { gpsLost: false, routeLoading: false, routeFailed: false, offline: false, approach: false };
+    linkTarget = null; linkDistM = 0;
     renderNavStatus();
     mapView.pitch = 0; pitchTarget = 0;
     viewRot = 0;
@@ -2034,7 +2122,8 @@
 
   // 회전 동작을 음성용 문구로
   function getStepVoice(step) {
-    const type = step.maneuver.type, mod = step.maneuver.modifier || '';
+    const m = (step && step.maneuver) || {};
+    const type = m.type, mod = m.modifier || '';
     if (type === 'arrive') return '목적지에 도착했습니다';
     if (type === 'depart') return '안내를 시작합니다';
     // ★ 자동차에만 나오는 것들 (TMAP 자동차 회전코드 101~116)
@@ -2091,7 +2180,8 @@
   }
 
   function getStepText(step) {
-    const type = step.maneuver.type, mod = step.maneuver.modifier || '', name = step.name || '';
+    const m = (step && step.maneuver) || {};
+    const type = m.type, mod = m.modifier || '', name = step.name || '';
     if (type === 'depart') return '출발';
     if (type === 'arrive') return '목적지 도착';
     if (type === 'ramp') return `고속도로 진입${name ? ' · '+name : ''}`;
@@ -2105,7 +2195,8 @@
     return name || '직진';
   }
   function getStepArrow(step) {
-    const type = step.maneuver.type, mod = step.maneuver.modifier || '';
+    const m = (step && step.maneuver) || {};
+    const type = m.type, mod = m.modifier || '';
     if (type === 'arrive') return '🏁';
     if (type === 'ramp')   return mod === 'left' ? '↰' : '↱';
     if (type === 'exit')   return mod === 'left' ? '↖' : '↗';
