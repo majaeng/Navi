@@ -122,48 +122,66 @@
     /* 상단 턴 배너 */
     .turn-banner {
       position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+      /* ★ 검정 배경은 더하기 화면에서 그냥 투명이다 — 아무 일도 안 한다.
+         남겨두는 건 폰에서 미리 볼 때를 위해서일 뿐이다.
+         안경에서 글자를 받쳐주는 건 테두리 하나뿐이므로 흰색 100% 로 올린다. */
       background: rgba(0,0,0,0.55);
-      border: 2px solid rgba(255,255,255,0.55);
-      border-radius: 50px; padding: 10px 20px 10px 10px;
+      border: 3px solid #ffffff;
+      border-radius: 50px; padding: 12px 22px 12px 12px;
       display: flex; align-items: center; gap: 12px; z-index: 10;
       white-space: nowrap;
     }
     .turn-arrow-box {
       width: 44px; height: 44px;
       background: rgba(92,200,255,0.28);
-      border: 2px solid #5cc8ff;
+      border: 3px solid #5cc8ff;
       border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      font-size: 26px; flex-shrink: 0;
+      font-size: 32px; flex-shrink: 0;
     }
     /* 남은 거리 — 안내에서 가장 자주 보는 숫자다. 가장 크게. */
-    .turn-info .turn-dist { font-size: 34px; color: #fff; font-weight: 800; line-height: 1; }
-    .turn-info .turn-text { font-size: 19px; color: #fff; margin-top: 3px; }
+    /* ★ 34px = 0.81°. 42PPD·20° 화면에서 팔 뻗은 손톱보다 작았다.
+       달리면서 흘깃 보는 숫자다. 가장 크고 가장 굵게. */
+    .turn-info .turn-dist { font-size: 46px; color: #fff; font-weight: 900; line-height: 1; }
+    .turn-info .turn-text { font-size: 25px; color: #fff; font-weight: 700; margin-top: 4px; }
 
     /* 하단 카드 */
     .nav-card {
       position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
       background: rgba(0,0,0,0.55);
-      border: 2px solid rgba(255,255,255,0.5);
+      border: 3px solid #ffffff;
       border-radius: 18px; padding: 14px 24px;
       min-width: 280px;
       z-index: 10;
     }
     .nav-card-dest {
-      font-size: 24px; font-weight: 700; color: #fff;
+      font-size: 28px; font-weight: 800; color: #fff;
       margin-bottom: 8px;
     }
     .nav-card-row { display: flex; align-items: center; gap: 8px; }
     .nav-stat { display: flex; align-items: baseline; gap: 4px; }
-    .nav-stat .stat-val { font-size: 22px; font-weight: 700; color: #8dffab; }
-    .nav-stat .stat-label { font-size: 18px; color: #fff; }
-    .nav-divider { width: 2px; height: 18px; background: rgba(255,255,255,0.5); margin: 0 6px; }
+    .nav-stat .stat-val { font-size: 28px; font-weight: 800; color: #8dffab; }
+    .nav-stat .stat-label { font-size: 20px; font-weight: 600; color: #fff; }
+    .nav-divider { width: 2px; height: 20px; background: #ffffff; margin: 0 8px; }
 
-    /* 중앙 조준점 */
+    /* 상태 줄 — 회전 안내와 같은 자리를 쓰되 절대 겹치지 않는다 (하나만 뜬다) */
+    .nav-status {
+      position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+      max-width: 520px;
+      background: rgba(0,0,0,0.55);
+      border: 3px solid #ffd27a;
+      border-radius: 50px; padding: 12px 26px;
+      font-size: 26px; font-weight: 800; color: #ffd27a;
+      text-align: center; white-space: nowrap;
+      z-index: 16;
+    }
+    .nav-status.hidden { display: none; }
+
+    /* 중앙 조준점 (지금은 안 쓴다 — 위 HTML 주석 참고) */
     .compass-dot {
       position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
       width: 10px; height: 10px;
-      border: 2px solid rgba(255,255,255,0.8);
+      border: 2px solid #ffffff;
       border-radius: 50%;
       z-index: 5; pointer-events: none;
     }
@@ -178,8 +196,8 @@
     .back-btn {
       position: absolute; top: 16px; right: 14px;
       width: 34px; height: 34px;
-      background: rgba(0,0,0,0.5); border: 2px solid rgba(255,255,255,0.5);
-      border-radius: 50%; color: #fff; font-size: 18px;
+      background: rgba(0,0,0,0.5); border: 2px solid #ffffff;
+      border-radius: 50%; color: #fff; font-size: 20px; font-weight: 700;
       cursor: pointer; z-index: 20; opacity: 0.85;
       display: flex; align-items: center; justify-content: center;
       transition: opacity 200ms;
@@ -193,10 +211,10 @@
     .nav-help {
       position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
       background: rgba(0,0,0,0.72);
-      border: 2px solid rgba(255,255,255,0.55);
+      border: 3px solid #ffffff;
       border-radius: 16px; padding: 18px 26px;
       display: flex; flex-direction: column; gap: 8px;
-      font-size: 20px; color: #fff; text-align: center;
+      font-size: 22px; font-weight: 600; color: #fff; text-align: center;
       z-index: 25; pointer-events: none;
       transition: opacity 400ms;
     }
@@ -271,15 +289,18 @@
     <div>핀치: 시점 바꾸기</div>
   </div>
 
-  <!-- 중앙 고정점 -->
-  <div class="compass-dot"></div>
+  <!-- ★ '중앙 고정점' 을 뺐다.
+       코드 어디서도 건드리지 않는 장식이었고, 무엇보다 **현재 위치가 거기 있지 않다**
+       (현재 위치는 화면 아래 1/3, y=420). 그러니 내 위치도, 보는 방향도, 목적지도
+       아닌 밝은 점이 시야 한복판에 박혀 있던 것이다.
+       20° 시야에서 정중앙은 가장 아까운 자리다. -->
 
   <!-- 턴 안내 (상단) -->
   <div class="turn-banner" id="turn-banner">
     <div class="turn-arrow-box" id="turn-arrow">↑</div>
     <div class="turn-info">
       <div class="turn-dist" id="turn-dist">--</div>
-      <div class="turn-text" id="turn-text">경로 계산 중...</div>
+      <div class="turn-text" id="turn-text">--</div>
     </div>
   </div>
 
@@ -300,16 +321,33 @@
     </div>
   </div>
 
-  <!-- 오프라인 인디케이터 -->
-  <div id="offline-indicator" style="display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);background:rgba(255,150,0,0.8);border-radius:20px;padding:4px 12px;font-size:11px;color:#fff;z-index:15;align-items:center;gap:5px;">
-    <span>⚠</span><span>오프라인 - 캐시 경로 사용 중</span>
-  </div>
+  <!-- ══════════════════════════════════════════
+       상태 줄 — 한 자리, 한 문장
+       ══════════════════════════════════════════
+       ★★ 왜 합쳤나 (실측 화면에서 드러난 문제)
+
+         위치 안 잡힘              ← 회전 안내 자리에 밀어 넣음
+         ⚠ 오프라인 - 캐시 경로 사용 중  ← 그 위에 겹침
+         경로 계산 중...            ← 또 그 위에 겹침
+
+       세 개가 서로를 가려 하나도 못 읽었다. 게다가 **셋 다 동시에 참일 수 없다** —
+       위치를 못 잡았는데 경로를 계산 중이고 동시에 캐시를 쓰고 있을 수는 없다.
+       배치가 아니라 **상태가 꼬인 것**이었다.
+
+       ★ 그래서 상태를 내보내는 창구를 하나로 만든다.
+         셋을 각자 띄우게 두면 언젠가 또 겹친다. 자리를 옮기는 건 증상만 가린다.
+       ※ 오류 글을 '남은 거리' 칸(46px)에 밀어 넣지 않는다. 그래서 넘쳤다.
+         숫자 칸에는 숫자만 넣는다. -->
+  <div id="nav-status" class="nav-status hidden"></div>
 
   <!-- 뒤로 (Escape 키로도 동작, 버튼은 최소화) -->
   <button class="back-btn focusable" id="back-btn">✕</button>
 
   <!-- 로딩 -->
-  <div class="loading-overlay" id="loading-overlay">
+  <!-- ★ hidden 을 명시한다. 전에는 startNav 의 showLoading→hideLoading 이
+       결과적으로 가려주고 있었을 뿐이다. 그 호출을 상태 줄로 옮겼으므로
+       여기에 hidden 이 없으면 검은 덮개가 안내 화면을 영원히 덮는다. -->
+  <div class="loading-overlay hidden" id="loading-overlay">
     <div class="spinner"></div>
     <div class="loading-text" id="loading-text">경로 계산 중...</div>
   </div>
@@ -453,10 +491,45 @@
   function loadCachedRoute() {
     try { return JSON.parse(localStorage.getItem('ko_navi_cache') || 'null'); } catch { return null; }
   }
+  //  ══════════════════════════════════════════
+  //   안내 화면의 상태 — 한 번에 하나만
+  //  ══════════════════════════════════════════
+  //  ★ 세 가지가 동시에 참일 수 없으므로 **우선순위로 하나만 고른다.**
+  //    위가 더 급한 것이다.
+  //      ① 위치를 못 잡음   — 이게 아니면 나머지가 다 무의미하다
+  //      ② 경로를 못 받음   — 영영 '계산 중' 으로 남는 게 가장 나빴다
+  //      ③ 경로 계산 중
+  //      ④ 캐시(오프라인) 경로로 안내 중
+  //      ⑤ 정상 — 회전 안내를 보여준다
+  //  ※ 상태가 있으면 회전 안내를 **숨긴다.** 둘이 같이 뜨면 또 겹친다.
+  let navFlags = { gpsLost: false, routeLoading: false, routeFailed: false, offline: false };
+
+  function renderNavStatus() {
+    const el = document.getElementById('nav-status');
+    const banner = document.getElementById('turn-banner');
+    if (!el || !banner) return;
+    let msg = '';
+    if (navFlags.gpsLost)           msg = '위치 안 잡힘 — 하늘이 보이는 곳으로';
+    else if (navFlags.routeFailed)  msg = '경로를 못 받았습니다';
+    else if (navFlags.routeLoading) msg = '경로 계산 중…';
+    else if (navFlags.offline)      msg = '저장해둔 경로로 안내 중';
+    if (msg) {
+      el.textContent = msg;
+      el.classList.remove('hidden');
+      banner.style.visibility = 'hidden';
+    } else {
+      el.classList.add('hidden');
+      banner.style.visibility = 'visible';
+    }
+  }
+  function setNavFlag(k, v) {
+    if (navFlags[k] === v) return;
+    navFlags[k] = v;
+    renderNavStatus();
+  }
   function setOffline(v) {
     isOffline = v;
-    const el = document.getElementById('offline-indicator');
-    if (el) el.style.display = v ? 'flex' : 'none';
+    setNavFlag('offline', v);
   }
 
   const canvas = document.getElementById('ar-canvas');
@@ -472,6 +545,13 @@
   const PITCH_K = 0.0022;           // 원근 압축 강도
   const ZOOM_MIN = 13, ZOOM_MAX = 19;
   const TILE_SIZE = 256;
+  //  ★ 이 높이보다 위는 도로를 안 그린다 (기울이기로 뭉개지는 띠).
+  //    경로선·목적지 표시는 여기 걸리지 않는다 — 그건 끝까지 보여야 한다.
+  const ROAD_TOP_CUT = 130;
+  //  ★ 골목·보행로를 그리는 반경(화면 픽셀). 줌 18에서 1px ≈ 0.47m 이므로
+  //    220px ≈ 약 100m — 걸을 때 실제로 쓰는 범위다.
+  const NEAR_R  = 220;
+  const NEAR_R2 = NEAR_R * NEAR_R;
   const vtCache = {};       // key -> [{props, geom}] 도로 피처 배열
   const vtLoading = new Set();
 
@@ -586,8 +666,59 @@
   }
 
   // ── 도로 벡터선 그리기 ──
+  //  ══════════════════════════════════════════
+  //   도로 이름
+  //  ══════════════════════════════════════════
+  //  ★ 왜 넣나: 가시성을 위해 선을 확 줄였다. 줄인 만큼
+  //    "어느 길인가" 가 안 보인다. 선으로 못 주는 정보를 **이름으로 준다.**
+  //    Meta 자체 내비도 선을 줄이고 이름을 남기는 쪽이다.
+  //
+  //  ※ 선을 따라 휘어지게 쓰지 않는다. 지도가 진행 방향으로 돌아가므로
+  //    휜 글자는 뒤집히거나 거꾸로 선다. **항상 수평**으로 쓴다 —
+  //    흘깃 보는 화면에서 읽는 데 드는 시간이 가장 짧다.
+  //
+  //  ※ 같은 이름을 여러 번 쓰지 않고, 겹치면 나중 것을 버린다.
+  //    글자가 겹치면 더하기 화면에서는 밝기가 더해져 **아무것도 못 읽는다.**
+  let roadLabels = [];      // {name, x, y, prio}
+  const LABEL_FONT = '700 19px -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif';
+
+  function flushRoadLabels() {
+    if (!roadLabels.length) return;
+    ctx.save();
+    ctx.font = LABEL_FONT;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    //  큰길 먼저 자리를 잡는다 (prio 낮을수록 큰길)
+    roadLabels.sort((a, b) => a.prio - b.prio);
+    const placed = [];
+    const seen = new Set();
+    for (const L of roadLabels) {
+      if (seen.has(L.name)) continue;                 // 같은 이름은 한 번만
+      const w = ctx.measureText(L.name).width + 10;
+      const h = 24;
+      const box = { x1: L.x - w/2, y1: L.y - h/2, x2: L.x + w/2, y2: L.y + h/2 };
+      if (box.x1 < 4 || box.x2 > 596 || box.y1 < ROAD_TOP_CUT || box.y2 > 596) continue;
+      let hit = false;
+      for (const q of placed) {
+        if (box.x1 < q.x2 && box.x2 > q.x1 && box.y1 < q.y2 && box.y2 > q.y1) { hit = true; break; }
+      }
+      if (hit) continue;
+      placed.push(box);
+      seen.add(L.name);
+      //  ★ 검은 외곽선을 못 쓴다 (더하기 화면에서 검정 = 투명).
+      //    대신 글자 아래에 도로선을 지우듯 어둡게 깔 수도 없다.
+      //    그래서 순백 + 굵은 획으로만 승부한다. 그게 가장 밝다.
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(L.name, L.x, L.y);
+      if (placed.length >= 7) break;   // 너무 많으면 화면이 다시 시끄러워진다
+    }
+    ctx.restore();
+    roadLabels = [];
+  }
+
   function drawRoads(cx, cy) {
     const z = tileZ();
+    roadLabels = [];
     const EXTENT = 4096;
     const tilesNeeded = Math.ceil(300 / TILE_SIZE) + 1;
 
@@ -598,59 +729,128 @@
         const roads = vtCache[key];
         if (!roads.length) continue;
 
+        // ══════════════════════════════════════════
+        //  ★★ 여기를 통째로 갈아엎었다 (2026-08-27). 왜인지 적어둔다.
+        // ══════════════════════════════════════════
+        //
+        //  실차 주행에서 "지도가 안 보인다" 가 나왔다. 원인을 재보니 셋이었다.
+        //
+        //  ① 반투명을 썼다 — 이게 가장 컸다.
+        //     안경은 **더하기 화면**이다. 검정을 못 그린다. 화면 밝기가
+        //     바깥 풍경 밝기에 그대로 **더해질 뿐**이다.
+        //     즉 대비를 만드는 수단이 밝기 하나뿐인데,
+        //     알파 0.5 = 약 2,500 nit 이다.
+        //     낮 도심 배경은 아스팔트 1,000~3,000 · 콘크리트 5,000~9,000 ·
+        //     하늘 6,000~10,000 nit 이다.
+        //     → 밝은 노면이나 하늘에 겹치는 순간 도로선이 **배경보다 어두워진다.**
+        //       안 보이는 게 아니라 없는 것과 같다.
+        //     ※ 더하기 화면에서 알파는 '연하게' 가 아니라 '지우기' 다.
+        //       그릴 것은 1.0 으로 그리고, 아닌 것은 아예 안 그린다.
+        //       중간이 제일 나쁘다.
+        //
+        //  ② 선이 눈의 한계보다 얇았다.
+        //     42 PPD 이므로 1px = 1.43분각이다.
+        //     옛 중심선 1.6~3.2px = 2.3~4.6분각.
+        //     높은 대비에서야 1분각도 갈리지만, **낮은 대비에서는 5~10분각**은
+        //     있어야 한다. 도광판 자체 번짐까지 더하면 더 그렇다.
+        //     → 옛 도로선은 전부 그 아래에 있었다.
+        //
+        //  ③ 그릴 게 너무 많았다.
+        //     Mapbox 의 도로를 거의 다 그렸다 — 골목·보행로까지.
+        //     화면은 600×600 이고 시야는 **고작 20°** 다.
+        //     반투명 흰 선 수십 개가 겹치면 더하기 화면에서는 밝기가 서로
+        //     더해져 흰 그물이 된다. 경로선이 안 보인 게 아니라
+        //     **배경이 너무 시끄러웠다.**
+        //
+        //  ★ 그래서 이렇게 바꿨다:
+        //    · 알파를 없앤다 (가장 흐린 것도 0.85 = 약 4,250 nit)
+        //    · 두 겹(면+심) 을 한 겹 굵은 선으로 — 겹칠수록 번지기만 했다
+        //    · 등급을 다섯에서 **둘**로 줄이고, 골목·보행로는 아예 뺀다
+        //    · 가장 얇은 선도 7px(10분각) 아래로 내려가지 않게
+        //
+        //  ※ 도보/드라이브를 **구분하지 않는다.** 눈과 화면은 같은 것이므로
+        //    잘 보이는 그림도 하나여야 한다. 모드로 갈리면 한쪽은 반드시 못 쓴다.
         for (const { props, geom } of roads) {
           const cls = props.class || '';
-          let lw, alpha;
           const z = tileZ();
-          // 줌 낮을 때 세부 도로 숨김 (건물 외곽처럼 보이는 현상 방지)
-          // ★ 안경은 더하기 화면이라 흐린 선은 아예 안 보인다.
-          //   원래 값(굵기 0.6~2.2, 진하기 0.20~0.90)은 일반 화면 기준이었다.
-          //   굵기는 두 배 남짓, 진하기는 큰 길일수록 확실하게 올린다.
-          //   걸으면서 흘깃 보는 화면이라 '길이 있다/없다' 가 먼저 보여야 한다.
-          // ★ 선 하나로 그리면 '길' 이 아니라 '실금' 으로 보인다.
-          //   실제 지도처럼 넓은 면(도로 폭)을 먼저 깔고,
-          //   그 위에 밝은 중심선을 얹어 두 겹으로 그린다.
-          //   더하기 화면에서는 검은 테두리를 못 쓰므로(투명해진다)
-          //   '넓고 은은한 면 + 좁고 밝은 심' 조합이 가장 도로처럼 보인다.
-          let core;               // 중심선 굵기 (0 이면 안 그린다)
-          if (['path','footway','pedestrian','steps','track'].includes(cls)) {
-            if (z < 17) continue; // 줌 17 미만이면 보행로 숨김
-            lw = 4;  alpha = 0.45; core = 0;
-          } else if (['service','alley'].includes(cls)) {
-            if (z < 16) continue;
-            lw = 6;  alpha = 0.50; core = 1.6;
-          } else if (['motorway','trunk'].includes(cls))       { lw = 16; alpha = 0.62; core = 3.8; }
-          else if (['primary','secondary'].includes(cls))      { lw = 13; alpha = 0.58; core = 3.2; }
-          else if (['tertiary','street','street_limited'].includes(cls)) { lw = 10; alpha = 0.54; core = 2.6; }
-          else { lw = 8; alpha = 0.50; core = 2.2; }
 
-          // 길 하나를 한 번만 훑어 경로를 만들고, 굵기만 바꿔 두 번 칠한다
+          //  ══════════════════════════════════════════
+          //   ★★ 처음엔 보행로·골목을 통째로 뺐다. 그건 틀렸다.
+          //  ══════════════════════════════════════════
+          //   "보행로를 안 그리면 걷기 모드에서 뭘 보냐" — 맞는 지적이었다.
+          //   흰 그물이 된 진짜 원인은 '보행로가 있어서' 가 아니라
+          //   **모든 걸 화면 끝까지 흐리게 그려서** 였다.
+          //   등급으로 자를 게 아니라 **거리로** 잘랐어야 했다.
+          //
+          //   ★ 가까운 곳은 다 그리고, 먼 곳은 큰길만 그린다.
+          //     걸을 때 필요한 보행로는 발밑 100m 다.
+          //     200m 앞 골목은 걸을 때도 안 본다 —
+          //     그런데 그게 화면 위쪽에서 겹쳐 쌓여 다 뭉갰다.
+          //
+          //   ※ 모드로 가르지 않는다. 차로 가면 100m 를 6초에 지나가니
+          //     알아서 흘러가고, 걸으면 그 자리에 오래 남는다.
+          //     **같은 규칙인데 속도가 알아서 다르게 만든다.**
+          //     모드로 갈라놓으면 한쪽은 반드시 손이 덜 간 채로 남는다.
+          let lw, alpha, nearOnly = false;
+          if (['motorway','trunk','primary','secondary'].includes(cls)) {
+            lw = 11; alpha = 1.0;                    // 큰길 — 화면 끝까지
+          } else if (['tertiary','street','street_limited'].includes(cls)) {
+            lw = 7;  alpha = 0.85;                   // 동네길 — 화면 끝까지
+          } else if (['service','alley'].includes(cls)) {
+            if (z < 17) continue;
+            lw = 6;  alpha = 0.85;  nearOnly = true; // 골목 — 내 주변만
+          } else if (['path','footway','pedestrian','steps','track'].includes(cls)) {
+            if (z < 17) continue;
+            //  ★ 보행로는 걸을 때 **가장 중요한 선**이다. 다만 발밑만.
+            //    굵기로 큰길과 구분한다 — 밝기로 구분하면 흐려져서 안 보인다.
+            lw = 5;  alpha = 0.85;  nearOnly = true;
+          } else {
+            continue;                                // 그 밖(철길·페리 등)은 뺀다
+          }
+
           ctx.beginPath();
           ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+          const pts = [];          // 화면에 실제로 그려진 점들 (이름 자리 잡기용)
           for (const ring of geom) {
             let first = true;
             for (const {x, y} of ring) {
               const fx = (tx + x / EXTENT - cx) * TILE_SIZE + POS_X;
               const fy = (ty + y / EXTENT - cy) * TILE_SIZE + POS_Y;
+              //  ★ 거리는 **기울이기 전** 좌표로 잰다.
+              //    기울인 뒤 좌표는 앞쪽이 압축돼 있어 거리가 실제와 다르다.
+              if (nearOnly) {
+                const ddx = fx - POS_X, ddy = fy - POS_Y;
+                if (ddx*ddx + ddy*ddy > NEAR_R2) { first = true; continue; }
+              }
               const p = proj(fx, fy);
               if (!p.ok) { first = true; continue; }   // 지평선 너머는 끊기
+              //  ★ 화면 위쪽 띠는 기울이기 때문에 도로가 몇 px 안에 겹쳐 쌓인다.
+              //    더하기 화면에서 겹치면 밝기가 더해져 **흰 덩어리**가 된다.
+              //    쿼터뷰는 그대로 두되, 그 뭉개지는 띠에는 아무것도 안 그린다.
+              //    비어 있는 게 뭉개진 것보다 낫다.
+              if (p.y < ROAD_TOP_CUT) { first = true; continue; }
               first ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
               first = false;
+              pts.push(p);
             }
           }
-          // ① 도로 면 (넓고 은은하게)
-          ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+          //  한 겹으로만 칠한다 — 두 겹은 번짐만 키웠다
+          ctx.strokeStyle = alpha >= 1 ? '#ffffff' : `rgba(255,255,255,${alpha})`;
           ctx.lineWidth = lw;
           ctx.stroke();
-          // ② 중심선 (좁고 밝게) — 이게 있어야 길의 방향이 또렷하다
-          if (core > 0) {
-            ctx.strokeStyle = '#ffffff';   // 심은 순백으로 — 가장 밝게
-            ctx.lineWidth = core;
-            ctx.stroke();
+
+          //  ★ 이름 후보를 모아둔다. 여기서 바로 쓰면 뒤에 그려지는 도로가
+          //    글자 위를 덮는다. 도로를 다 그린 뒤 한꺼번에 얹는다.
+          //  ※ 골목·보행로 이름은 안 쓴다 — 화면이 다시 시끄러워진다.
+          const nm = props.name_ko || props.name || '';
+          if (nm && !nearOnly && nm.length <= 12 && pts.length) {
+            const mid = pts[Math.floor(pts.length / 2)];
+            roadLabels.push({ name: nm, x: mid.x, y: mid.y, prio: lw >= 11 ? 0 : 1 });
           }
         }
       }
     }
+    flushRoadLabels();
   }
 
   // ── 화면 전환 ──
@@ -947,7 +1147,11 @@
     selectedDest = dest;
     document.getElementById('nav-dest-name').textContent = dest.name;
     showScreen('screen-nav');
-    showLoading('경로 계산 중...');
+    //  ★ 안내 화면의 상태는 전부 상태 줄 하나로 낸다.
+    //    showLoading 은 검색 화면에서만 쓴다 — 안내 중에 가운데를 덮으면
+    //    지도도 경로도 못 본다.
+    navFlags = { gpsLost: false, routeLoading: true, routeFailed: false, offline: false };
+    renderNavStatus();
     // 조작법을 잠깐 보여준다 (처음 쓰는 사람은 종료하는 법도 모른다)
     const help = document.getElementById('nav-help');
     if (help) {
@@ -984,7 +1188,10 @@
         // 경로 전체가 보이도록 줌 자동 조정
         fitRouteBounds();
       }
-      hideLoading();
+      //  ★ 경로가 없는데 '계산 중' 을 내리면 화면이 텅 빈 채로 남는다.
+      //    못 받았으면 못 받았다고 말한다.
+      setNavFlag('routeLoading', false);
+      if (!routeCoords.length) setNavFlag('routeFailed', true);
       startRenderLoop();
       startTracking(dest);
     }).catch(() => {
@@ -999,7 +1206,8 @@
         fitRouteBounds();
         setOffline(true);
       }
-      hideLoading();
+      setNavFlag('routeLoading', false);
+      if (!routeCoords.length) setNavFlag('routeFailed', true);
       startRenderLoop();
       startTracking(dest);
     });
@@ -1369,7 +1577,9 @@
       // ★ 경로선은 화면에서 가장 중요한 선이다. 도로보다 확실히 위에 보여야 한다.
       //   외곽 번짐 (넓게, 그러나 도로와 섞이지 않게 색을 확실히)
       ctx.beginPath();
-      ctx.strokeStyle = 'rgba(60,255,140,0.40)';   // 초록 번짐
+      //  ★ 바깥 띠는 '경로가 지나가는 폭' 을 알려주는 몸통이다.
+      //    도로가 밝아진 만큼 이것도 같이 올린다 (0.40 → 0.60 ≈ 3,000 nit).
+      ctx.strokeStyle = 'rgba(60,255,140,0.60)';
       ctx.lineWidth = 22; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
       let started = false;
       routeCoords.forEach(pt => {
@@ -1385,8 +1595,11 @@
       // ★ 파랑은 흰 도로 위에 얹히면 빛이 섞여 묻혔다 (더하기 화면).
       //   초록은 흰색과 가장 멀리 떨어져 있어 겹쳐도 구분된다.
       ctx.strokeStyle = '#3cff8c';
-      ctx.lineWidth = 11; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      ctx.shadowColor = 'rgba(60,255,140,1)'; ctx.shadowBlur = 14;
+      ctx.lineWidth = 13; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      //  ★ 글로우(shadowBlur)를 뺐다.
+      //    불투명 화면에서는 강조지만 **더하기 화면에서는 빛을 주변에 퍼뜨려
+      //    경계를 흐린다.** 밝아 보이지만 덜 또렷해진다.
+      //    강조는 번짐이 아니라 굵기로 한다 (11 → 13px).
       started = false;
       routeCoords.forEach(pt => {
         const p = latLngToPixel(pt.lat, pt.lng);
@@ -1395,7 +1608,6 @@
         started = true;
       });
       ctx.stroke();
-      ctx.shadowBlur = 0;
     }
 
     // 목적지 핀 or 화면 밖이면 가장자리 방향 인디케이터
@@ -1496,8 +1708,8 @@
       ctx.save();
       ctx.beginPath(); ctx.arc(x, y, 30, 0, Math.PI * 2);
       ctx.setLineDash([5, 5]);
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#ffffff';   // 더하기 화면에서 반투명은 '연하게' 가 아니라 '지우기' 다
+      ctx.lineWidth = 3;
       ctx.stroke();
       ctx.restore();
     }
@@ -1541,8 +1753,8 @@
     // 중간 링 (흰색)
     ctx.beginPath(); ctx.arc(x, y, 11, 0, Math.PI*2);
     ctx.fillStyle = '#fff';
-    ctx.shadowColor = 'rgba(255,255,255,0.4)'; ctx.shadowBlur = 6;
-    ctx.fill(); ctx.shadowBlur = 0;
+    //  ★ 글로우를 뺐다 — 더하기 화면에서 번짐은 경계를 흐릴 뿐이다
+    ctx.fill();
 
     // 내부 파란/보라 그라디언트 원 (Meta 스타일)
     const grad = ctx.createRadialGradient(x-2, y-2, 1, x, y, 9);
@@ -1676,6 +1888,8 @@
   let lastRerouteAt = 0;
 
   function startTracking(dest) {
+    //  ※ 여기서 미리 켜두지 않는다. 첫 위치가 올 때까지는
+    //    '경로 계산 중' 이 이미 떠 있으므로 두 번 말할 필요가 없다.
     if (watchId !== null) navigator.geolocation.clearWatch(watchId);
     offStreak = 0;
     lastRerouteAt = 0;
@@ -1686,6 +1900,10 @@
       mapView.centerLat = currentPos.lat;
       mapView.centerLng = currentPos.lng;
       try { localStorage.setItem('ko_navi_last_pos', JSON.stringify(currentPos)); } catch {}
+      //  ★ 위치가 다시 왔으면 경고를 **반드시 내린다.**
+      //    안 내리면 지나간 오류가 계속 떠 있어 '늑대다' 가 된다
+      //    (번역 앱에서 똑같은 걸 겪었다).
+      setNavFlag('gpsLost', false);
       setOffline(false);
 
       if (routeCoords.length < 2) return;
@@ -1766,9 +1984,11 @@
     }, err => {
       // ★ 조용히 멈추지 않는다. 화면이 얼어붙었는지 내가 멈춘 건지
       //   사용자가 구분할 수 있어야 한다.
+      //  ★ 위치를 못 잡은 것과 '오프라인' 은 다른 일이다.
+      //    전에는 위치 오류에 setOffline(true) 를 걸어서
+      //    "캐시 경로 사용 중" 이 같이 떴다 — 사실이 아니었다.
       console.warn(err.message);
-      setOffline(true);
-      document.getElementById('turn-dist').textContent = '위치 안 잡힘';
+      setNavFlag('gpsLost', true);
     }, trackOpts());
   }
 
@@ -1782,6 +2002,8 @@
     isRerouting = false; spokenDistBucket = null; spokenBucketVal = null;
     routeCum = []; stepAlong = []; alongNow = 0; projHint = 0;
     routeTotalM = 0; routeDurationS = 0; offStreak = 0;
+    navFlags = { gpsLost: false, routeLoading: false, routeFailed: false, offline: false };
+    renderNavStatus();
     mapView.pitch = 0; pitchTarget = 0;
     viewRot = 0;
     routeCoords = []; routeSteps = []; selectedDest = null; currentHeading = null;
