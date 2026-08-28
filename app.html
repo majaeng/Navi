@@ -297,7 +297,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v29 · 08-27</div>
+  <div class="build-tag" id="build-tag">v30 · 08-28</div>
 
   <div class="location-box">
     <div class="label">현재 위치</div>
@@ -1742,7 +1742,6 @@
 
   async function doTencentSearch(q) {
     const el = document.getElementById('search-status');
-    const show = list => renderSearchResults(list);
     const fail = msg => {
       el.className = 'search-empty';
       el.textContent = msg;
@@ -1752,37 +1751,45 @@
       const w = gcj02ToWgs84(p.location.lat, p.location.lng);
       return { name: p.title, addr: p.address || '', lat: w.lat, lng: w.lng, dist: null };
     };
+    const errMsg = d => TENCENT_ERR[d.status] || `검색 실패 (${d.status}) ${d.message || ''}`;
+
+    //  ★★ "결과가 있으면 멈춘다" 가 잘못이었다.
+    //    `…高新区吉瑞二路188号1栋1单元` 을 넣으면 장소검색이 `高新区` 만 보고
+    //    개발구·초등학교 따위를 잔뜩 물어온다. 결과가 있으니 지오코더까지
+    //    가지도 못했다 — **정답은 지오코더에 있었는데** 문 앞에서 멈춘 것이다.
+    //  ★ 그래서 **둘을 같이 부르고**, 주소로 정확히 풀린 게 있으면 맨 위에 둔다.
+    //    호출이 두 번이 되지만 하루 6,000회다. 아낄 자리가 아니다.
+    //  ※ 지오코더는 아무 말이나 넣어도 뭔가를 돌려준다. 그래서 신뢰도를 본다.
+    //    낮으면 목록에 안 올린다 — 엉뚱한 곳으로 안내하느니 안 보이는 게 낫다.
+    let g = null;
+    if (currentPos) g = wgs84ToGcj02(currentPos.lat, currentPos.lng);
 
     try {
-      // ① 가까운 곳부터 (5km)
-      if (currentPos) {
-        const g = wgs84ToGcj02(currentPos.lat, currentPos.lng);
-        const d = await jsonp(tencentSearchUrl(q, `nearby(${g.lat},${g.lng},5000,1)`));
-        if (d.status !== 0) return fail(TENCENT_ERR[d.status] || `검색 실패 (${d.status}) ${d.message || ''}`);
-        if (d.data && d.data.length) return show(d.data.map(toWgs));
-      }
+      const [near, geo] = await Promise.all([
+        g ? jsonp(tencentSearchUrl(q, `nearby(${g.lat},${g.lng},5000,1)`)).catch(() => null) : null,
+        jsonp(`https://apis.map.qq.com/ws/geocoder/v1/?address=${encodeURIComponent(q)}&key=${TENCENT_KEY}`).catch(() => null),
+      ]);
 
-      // ② 더 넓게 (50km) — 같은 도시 안이면 여기서 잡힌다
-      if (currentPos) {
-        const g = wgs84ToGcj02(currentPos.lat, currentPos.lng);
-        const d = await jsonp(tencentSearchUrl(q, `nearby(${g.lat},${g.lng},50000,1)`));
-        if (d.status !== 0) return fail(TENCENT_ERR[d.status] || `검색 실패 (${d.status}) ${d.message || ''}`);
-        if (d.data && d.data.length) return show(d.data.map(toWgs));
-      }
+      if (near && near.status !== 0 && near.status !== 348) return fail(errMsg(near));
 
-      // ③ 주소로 풀어본다 — 장소 이름이 아니라 주소일 때
-      const gd = await jsonp(`https://apis.map.qq.com/ws/geocoder/v1/?address=${encodeURIComponent(q)}&key=${TENCENT_KEY}`);
-      if (gd.status !== 0) return fail(TENCENT_ERR[gd.status] || `검색 실패 (${gd.status}) ${gd.message || ''}`);
-      const r = gd.result;
-      if (r && r.location) {
-        const w = gcj02ToWgs84(r.location.lat, r.location.lng);
-        //  ※ 신뢰도가 낮으면 엉뚱한 곳일 수 있다. 숨기지 말고 같이 보여준다.
-        const weak = (r.reliability != null && r.reliability < 5);
-        return show([{
-          name: r.title || q,
-          addr: (r.address || '') + (weak ? '  (대략 위치)' : ''),
-          lat: w.lat, lng: w.lng, dist: null,
-        }]);
+      const list = [];
+      //  주소로 정확히 풀렸으면 맨 앞에 — 이게 사용자가 찾던 것이다
+      if (geo && geo.status === 0 && geo.result && geo.result.location) {
+        const r = geo.result;
+        const rel = r.reliability == null ? 0 : r.reliability;
+        if (rel >= 5) {
+          const w = gcj02ToWgs84(r.location.lat, r.location.lng);
+          list.push({ name: r.title || q, addr: '📍 ' + (r.address || ''), lat: w.lat, lng: w.lng, dist: null });
+        }
+      }
+      if (near && near.data) list.push(...near.data.map(toWgs));
+      if (list.length) return renderSearchResults(list);
+
+      // 가까운 데 없으면 넓혀본다 (같은 도시 안이면 여기서 잡힌다)
+      if (g) {
+        const far = await jsonp(tencentSearchUrl(q, `nearby(${g.lat},${g.lng},50000,1)`));
+        if (far.status !== 0 && far.status !== 348) return fail(errMsg(far));
+        if (far.data && far.data.length) return renderSearchResults(far.data.map(toWgs));
       }
       fail('검색 결과가 없습니다');
     } catch (e) {
