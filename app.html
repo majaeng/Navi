@@ -297,7 +297,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v23 · 08-27</div>
+  <div class="build-tag" id="build-tag">v24 · 08-27</div>
 
   <div class="location-box">
     <div class="label">현재 위치</div>
@@ -908,10 +908,19 @@
   //    필요한 건 **경로가 지나는 도로**뿐이고, 그건 벡터 타일 서너 장이면 된다
   //    (실측 3장 · 95KB · 268ms, 경로당 한 번).
   //
-  //  ※ 폭은 등급별 어림값이다. 실제 폭 데이터는 어디에도 없다.
-  //    다만 '도로에는 폭이 있다' 는 사실을 그리는 것이지 규칙을 지어내는 게 아니다.
+  //  ※ 폭은 등급별 **어림값**이다. 실제 폭 데이터는 어디에도 없다.
+  //  ★★ 한 경로로 맞추면 안 된다. 네 경로에서 재보니 이렇게 흩어졌다:
+  //        primary    16.8 / 12.6 /  4.8 m
+  //        secondary  10.4 /  7.4 / 14.3 m
+  //        street      4.6 /  7.1 m
+  //    같은 등급이라도 세종대로와 영동대로의 폭이 같을 리 없다.
+  //    처음 잰 한 경로(오토웨이타워)에 맞췄으면 다른 데서 더 틀렸을 것이다.
+  //    ※ 한 번 잰 값으로 상수를 정하지 않는다.
+  //  ★ 그래서 여러 경로의 가운데 값을 쓰고, **점선으로** 그린다.
+  //    실선은 "여기가 정확히 경계다" 라는 주장이다. 우리는 그만큼 모른다.
+  //    점선은 "이쯤" 이라고 말한다 — 아는 만큼만 그린다.
   const ROAD_HALF_M = {           // 중심선에서 가장자리까지 (m)
-    motorway: 25, trunk: 22, primary: 20, secondary: 12,
+    motorway: 22, trunk: 18, primary: 13, secondary: 11,
     tertiary: 8, street: 6, street_limited: 6,
   };
   let roadEdges = [];             // [{a:{lat,lng}, b:{lat,lng}}] — 이미 밀어낸 선분
@@ -2282,6 +2291,8 @@
       ctx.save();
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2;
+      //  ★ 점선 = 어림값. 실선으로 그으면 정확한 경계라고 주장하는 게 된다.
+      ctx.setLineDash([7, 6]);
       ctx.beginPath();
       for (const e of roadEdges) {
         const p = latLngToPixel(e.a.lat, e.a.lng);
