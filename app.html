@@ -278,7 +278,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v14 · 08-27</div>
+  <div class="build-tag" id="build-tag">v15 · 08-27</div>
 
   <div class="location-box">
     <div class="label">현재 위치</div>
@@ -652,48 +652,40 @@
     catch (e) { return cv; }        // 다른 출처라 못 읽으면 원본 그대로 쓴다
     const px = d.data;
 
-    // 밝기 히스토그램으로 가장 흔한 어두운 값을 찾는다
-    const hist = new Uint32Array(64);
-    for (let i = 0; i < px.length; i += 4) {
-      const lum = (px[i] * 3 + px[i + 1] * 6 + px[i + 2]) >> 3;   // 0~255
-      hist[lum >> 2]++;
+    //  ══════════════════════════════════════════
+    //   ★★ 타일마다 밝기를 따로 계산하던 것을 없앴다
+    //  ══════════════════════════════════════════
+    //   전에는 타일마다 '가장 흔한 색' 과 '가장 밝은 곳' 을 찾아 배율을 정했다.
+    //   그러면 **옆 타일과 다른 배율**이 걸린다 —
+    //   같은 도로인데 타일 경계에서 밝기가 달라진다.
+    //   "색이 일관성 없이 띄엄띄엄 든다" 의 나머지 절반이 이것이었다.
+    //
+    //   ★ 실측하니 dark-v11 배경은 **강남·청두 모두 RGB(42,42,42)** 로 같았다.
+    //     스타일이 정한 고정색이니 타일마다 찾을 이유가 없다.
+    //     모든 타일에 **같은 곡선**을 먹인다. 그래야 이어 붙었을 때 같아 보인다.
+    //   ※ 손잡이를 없앤다. 타일별로 달라질 수 있는 여지 자체를 지운다.
+    const BG = 42;          // 배경 밝기 (실측 고정값)
+    const TOP = 168;        // 도심에서 가장 밝은 곳 (실측)
+    const GAMMA = 0.5;      // 중간톤을 끌어올린다 — 지도의 대부분이 여기 있다
+    if (!stripBackground.lut) {
+      const lut = new Uint8Array(256);
+      for (let v = 0; v < 256; v++) {
+        const t = Math.max(0, Math.min(1, (v - BG) / (TOP - BG)));
+        lut[v] = Math.round(255 * Math.pow(t, GAMMA));
+      }
+      stripBackground.lut = lut;
     }
-    let mode = 0, best = 0;
-    for (let b = 0; b < 24; b++) { if (hist[b] > best) { best = hist[b]; mode = b; } }
-    const base = (mode << 2) + 2;
+    const lut = stripBackground.lut;
 
-    //  ★ 뺀 뒤에는 어두워지므로 다시 키운다. 안 키우면 '색은 맞는데 안 보이는'
-    //    상태가 된다 — 오늘 흰 선에서 겪은 것과 같은 실수다.
-    //  ★★ 채널마다 따로 빼고 곱했더니 **색이 뒤틀렸다.**
-    //    실측 화면에서 작은 길이 형광 청록으로 나왔다 — 원래는 푸르스름한
-    //    회색인데, 파랑 채널이 더 크니 증폭도 더 크게 먹은 것이다.
-    //  ★ 밝기만 키우고 색은 건드리지 않는다.
-    //    한 픽셀의 배율을 '밝기' 로 정하고 R·G·B 에 **똑같이** 곱한다.
-    //    그러면 지도가 원래 의도한 색 그대로, 밝기만 올라간다.
-    let peak = 0;
+    //  밝기만 키우고 색비는 지킨다 (채널마다 따로 키우면 색이 뒤틀린다)
     for (let i = 0; i < px.length; i += 4) {
       const lum = (px[i] * 3 + px[i + 1] * 6 + px[i + 2]) >> 3;
-      if (lum > peak) peak = lum;
-    }
-    const room = Math.max(8, peak - base);
-
-    //  ★ 선형으로 키우면 '가장 밝은 곳' 만 밝아지고 나머지는 그대로 어둡다.
-    //    지도는 대부분이 중간 밝기다 — 거기가 안 올라오면 여전히 흐리다.
-    //    감마로 중간을 끌어올린다.
-    const GAMMA = 0.55;
-    const lut = new Uint8Array(256);
-    for (let v = 0; v < 256; v++) {
-      const t = Math.max(0, (v - base) / room);
-      lut[v] = Math.min(255, Math.round(255 * Math.pow(Math.min(1, t), GAMMA)));
-    }
-    for (let i = 0; i < px.length; i += 4) {
-      const lum = (px[i] * 3 + px[i + 1] * 6 + px[i + 2]) >> 3;
-      const want = lut[lum];
+      const want = lut[lum > 255 ? 255 : lum];
       if (want === 0) { px[i] = px[i + 1] = px[i + 2] = 0; continue; }
-      const k = want / Math.max(1, lum);          // 색비는 그대로, 밝기만
-      for (let c = 0; c < 3; c++) {
-        const v = px[i + c] * k;
-        px[i + c] = v > 255 ? 255 : v;
+      const k = want / Math.max(1, lum);
+      for (let c2 = 0; c2 < 3; c2++) {
+        const v = px[i + c2] * k;
+        px[i + c2] = v > 255 ? 255 : v;
       }
     }
     c.putImageData(d, 0, 0);
@@ -724,15 +716,32 @@
       if (keys.length > RASTER_MAX) delete rasterCache[keys[0]];
     };
     img.onerror = () => { rasterLoading.delete(key); };
-    //  ★★ dark-v11 을 쓰다가 "회색이라 거의 안 보인다" 가 나왔다. 재봤다:
-    //      dark-v11             배경 38 · 가장 밝은 곳 40  → 남는 여지 2
-    //      navigation-night-v1  배경  2 · 가장 밝은 곳 138 → 남는 여지 136
-    //    dark-v11 은 배경을 빼면 **남는 게 2** 다. 2.3배를 키워도 5 —
-    //    사실상 검정이다. 애초에 '은은한 배경지도' 용 스타일이라 그렇다.
-    //  ★ navigation-night-v1 은 내비게이션용이다. 배경이 거의 검정이고
-    //    도로가 밝다. 이 화면에 맞는 건 이것뿐이다.
-    //  ※ 눈으로 짐작하지 말고 픽셀을 세어볼 것. 68배 차이였다.
-    img.src = `https://api.mapbox.com/styles/v1/mapbox/navigation-night-v1/tiles/256/${z}/${tx}/${ty}@2x`
+    //  ══════════════════════════════════════════
+    //   ★★ 스타일을 두 번 갈아탔다. 왜인지 남긴다 — 두 번 다 내 잘못이다.
+    //  ══════════════════════════════════════════
+    //   ① dark-v11 → navigation-night-v1 로 바꿨다.
+    //      "dark-v11 은 배경을 빼면 남는 게 2뿐" 이라는 실측을 근거로 삼았다.
+    //      그런데 그 타일은 **만주 벌판 한복판**, 아무것도 없는 곳이었다.
+    //      빈 타일을 재놓고 스타일 탓을 했다.
+    //
+    //   ② navigation-night-v1 은 traffic 레이어가 **15개** 다 (스타일 정의 확인).
+    //      실시간 정체를 도로 옆에 빨강·노랑으로 덧그린다.
+    //      그런데 그 데이터는 **모든 도로에 있지 않다.** 있는 구간만 칠해진다.
+    //      → 도로 몇 군데만 띄엄띄엄 색이 드는 얼룩이 된다.
+    //      걷기 모드에서는 아예 쓸모도 없다.
+    //
+    //   ★ 강남 도심으로 다시 재니 결과가 뒤집혔다:
+    //        navigation-night-v1  중간톤 10.5% · 진한 색 12.3% (= 교통 얼룩)
+    //        dark-v11             중간톤 18.1% · 진한 색  0.0%
+    //      dark-v11 이 **지도 내용은 가장 많고 얼룩은 없다.**
+    //
+    //   ※ 배운 것: 지도 데이터를 잴 때는 **쓸 곳에서** 재야 한다.
+    //     빈 타일 하나로 두 번 헛돌았다.
+    //
+    //   ※ 색은 지도에 맡기지 않는다. 지도는 회색 맥락이고,
+    //     **색은 우리 것에만 쓴다** — 초록=경로, 노랑=접근, 빨강=목적지.
+    //     그러면 화면에 색이 보이면 그건 전부 '내가 알아야 할 것' 이다.
+    img.src = `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/${z}/${tx}/${ty}@2x`
             + `?access_token=${MAPBOX_TOKEN}`;
   }
 
