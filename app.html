@@ -329,7 +329,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v38 · 08-28</div>
+  <div class="build-tag" id="build-tag">v41 · 08-28</div>
 
   <!-- ★ 현재 위치를 즐겨찾기에 담을 수 있어야 한다.
        지금 서 있는 곳(숙소 정문·사무실 입구)은 주소로 검색해서 나오는 자리와
@@ -355,10 +355,17 @@
     <div class="section-label">최근 목적지</div>
     <div class="dest-list" id="recent-list"></div>
   </div>
-  <div class="section-label" id="preset-label">즐겨찾기</div>
-  <div class="dest-list" id="dest-list"></div>
+  <!-- ★ 내가 담은 것과 코드에 박아둔 목록을 한 칸에 섞어놨더니
+       "담은 적 없는 게 왜 즐겨찾기에 있냐" 가 나왔다. 맞는 말이다.
+       ※ 이름표가 사실과 달라지면 화면을 믿을 수 없게 된다. 칸을 나눈다. -->
+  <div id="fav-section" style="display:none">
+    <div class="section-label">즐겨찾기</div>
+    <div class="dest-list" id="fav-list"></div>
   </div>
-  <div class="hint">↑↓ 이동(끝에서 반대편으로) · Enter 선택 · → 즐겨찾기 담기/지우기</div>
+  <div class="hint" id="empty-hint" style="display:none">검색해서 → 로 담아두세요</div>
+
+  </div>
+  <div class="hint">↑↓ 이동 · Enter 선택 · → 즐겨찾기 · ← 최근 지우기</div>
 </div>
 
 <!-- 검색 -->
@@ -493,26 +500,28 @@
     return (currentPos && isInChina(currentPos.lat, currentPos.lng)) ? 'cn' : 'kr';
   }
 
-  const KR_PRESETS = [
-    { name: '강남역',     addr: '서울 강남구 강남대로 396',   lat: 37.4979, lng: 127.0276, icon: '🚇' },
-    { name: '홍대입구역', addr: '서울 마포구 양화로 160',     lat: 37.5573, lng: 126.9248, icon: '🚇' },
-    { name: '명동',       addr: '서울 중구 명동길 14',        lat: 37.5636, lng: 126.9869, icon: '🛍' },
-    { name: '경복궁',     addr: '서울 종로구 사직로 161',     lat: 37.5796, lng: 126.9770, icon: '🏯' },
-    { name: '인천공항',   addr: '인천 중구 공항로 272',       lat: 37.4602, lng: 126.4407, icon: '✈️' },
-  ];
-  //  ★ 청두 체류지. 두 주소 모두 지오코더로 풀면 **같은 지점**이다 —
-  //    번지(门牌号)까지만 알 수 있고 B座·1栋 은 단지 안쪽이라 어떤 지도도 모른다.
-  //    길안내로는 단지 앞까지 데려다주는 게 맞으므로 이대로 둔다.
-  //    이름만 다르게 달아 어느 동인지 본인이 알아보게 한다.
-  const CN_PRESETS = [
+  //  ══════════════════════════════════════════
+  //   코드에 박아둔 목록을 없앴다
+  //  ══════════════════════════════════════════
+  //  ★ "담은 적 없는 게 왜 즐겨찾기에 있냐" — 맞는 말이었다.
+  //    강남역·天安门广场 같은 건 내가 고른 것이 아니다.
+  //    지울 수도 없어서 자리만 차지했다.
+  //  ★ 대신 **처음 한 번만** 청두 두 곳을 즐겨찾기에 넣어준다.
+  //    넣어준 뒤로는 보통 즐겨찾기와 똑같다 — 지울 수도, 순서를 바꿀 수도 있다.
+  //    ※ 지울 수 없는 것을 남겨두지 않는다. 내 목록은 내 것이어야 한다.
+  const SEED = [
     { name: '吉瑞二路188号 B座 11층', addr: '成都市高新区 · 사무실', lat: 30.560576, lng: 104.059147, icon: '🏢' },
     { name: '吉瑞二路188号 1栋 1단원', addr: '成都市高新区 · 숙소',  lat: 30.560576, lng: 104.059147, icon: '🏠' },
-    { name: '天安门广场', addr: '北京市东城区',               lat: 39.9055, lng: 116.3976, icon: '🏛' },
-    { name: '外滩',       addr: '上海市黄浦区中山东一路',     lat: 31.2397, lng: 121.4901, icon: '🌃' },
-    { name: '西湖',       addr: '浙江省杭州市西湖区',         lat: 30.2590, lng: 120.1452, icon: '🌊' },
-    { name: '故宫',       addr: '北京市东城区景山前街4号',     lat: 39.9163, lng: 116.3972, icon: '🏯' },
-    { name: '上海浦东机场', addr: '上海市浦东新区迎宾大道',   lat: 31.1443, lng: 121.8083, icon: '✈️' },
   ];
+  function seedFavsOnce() {
+    try {
+      if (localStorage.getItem('ko_navi_seeded')) return;
+      localStorage.setItem('ko_navi_seeded', '1');
+      if (loadFavs().length) return;          // 이미 담은 게 있으면 손대지 않는다
+      saveFavs(SEED.slice());
+    } catch (e) {}
+  }
+
 
   let currentPos = null;
   let currentHeading = null;      // GPS 진행 방향 (멈추면 null)
@@ -638,6 +647,15 @@
   }
   function removeFav(name) {
     saveFavs(loadFavs().filter(f => f.name !== name));
+  }
+
+  //  ★ 최근 목적지도 지울 수 있어야 한다. 잘못 찍은 곳이 계속 남아 있으면
+  //    정작 필요한 게 밀려난다.
+  function removeRecent(name) {
+    try {
+      const list = loadRecentDests().filter(d => d.name !== name);
+      localStorage.setItem('ko_navi_recent', JSON.stringify(list));
+    } catch (e) {}
   }
 
   function saveRecentDest(dest) {
@@ -1643,7 +1661,6 @@
 
   // ── 홈 ──
   function buildHome() {
-    const PRESETS = currentCountry() === 'cn' ? CN_PRESETS : KR_PRESETS;
 
     // 최근 목적지
     //  ※ 최근 목적지도 지금 있는 나라 것만 보여준다.
@@ -1667,6 +1684,7 @@
         //  ★ 최근 항목에도 '이미 담긴 것인가' 를 달아둔다.
         //    이게 없으면 담은 뒤에도 계속 '담기' 로만 동작해서 지울 수가 없었다.
         el.dataset.mine = loadFavs().some(f => f.name === dest.name) ? '1' : '';
+        el.dataset.recent = '1';        // ← 로 최근 목록에서 지울 수 있는 항목
         el.innerHTML = `<span class="icon">${loadFavs().some(f => f.name === dest.name) ? '★' : '🕐'}</span><div><div class="name">${dest.name}</div><div class="addr" style="font-size:16px;color:#b8c8d8">${dest.addr}</div></div>`;
         el.addEventListener('click', () => startNav(dest));
         recentList.appendChild(el);
@@ -1675,25 +1693,32 @@
       recentSection.style.display = 'none';
     }
 
-    // 즐겨찾기 = 내가 담은 것 + 기본 목록 (이름이 같으면 담은 쪽만)
+    //  ★ 내가 담은 것과 기본 목록은 **다른 것**이다. 칸을 나눠 그린다.
     const favs = favsHere();
-    const shown = favs.concat(PRESETS.filter(p => !favs.some(f => f.name === p.name)));
-    const listBox = document.getElementById('dest-list');
-    listBox.innerHTML = '';
-    const list = document.createElement('div');
-    list.className = 'dest-list-inner';
-    listBox.appendChild(list);
-    shown.forEach((dest) => {
-      const el = document.createElement('div');
-      el.className = 'dest-item focusable';
-      el.tabIndex = 0;
-      el.dataset.name = dest.name;
-      el.dataset.dest = JSON.stringify(dest);
-      el.dataset.mine = favs.some(f => f.name === dest.name) ? '1' : '';
-      el.innerHTML = `<span class="icon">${dest.icon}</span><div><div class="name">${dest.name}</div><div class="addr">${dest.addr}</div></div>`;
-      el.addEventListener('click', () => startNav(dest));
-      list.appendChild(el);
-    });
+    function paintList(boxId, items, mine) {
+      const box = document.getElementById(boxId);
+      box.innerHTML = '';
+      const inner = document.createElement('div');
+      inner.className = 'dest-list-inner';
+      box.appendChild(inner);
+      items.forEach(dest => {
+        const el = document.createElement('div');
+        el.className = 'dest-item focusable';
+        el.tabIndex = 0;
+        el.dataset.name = dest.name;
+        el.dataset.dest = JSON.stringify(dest);
+        el.dataset.mine = mine ? '1' : '';
+        el.innerHTML = `<span class="icon">${dest.icon}</span><div><div class="name">${dest.name}</div><div class="addr">${dest.addr}</div></div>`;
+        el.addEventListener('click', () => startNav(dest));
+        inner.appendChild(el);
+      });
+    }
+    //  담은 게 없으면 그 칸을 아예 안 보여준다. 빈 이름표만 남기지 않는다.
+    document.getElementById('fav-section').style.display = favs.length ? 'block' : 'none';
+    paintList('fav-list', favs, true);
+    //  둘 다 비었으면 어떻게 담는지 알려준다. 빈 화면만 두지 않는다.
+    const eh = document.getElementById('empty-hint');
+    if (eh) eh.style.display = (!favs.length && !recents.length) ? 'block' : 'none';
 
     homeFocusables = [
       document.getElementById('here-box'),
@@ -1701,7 +1726,7 @@
       document.getElementById('btn-foot'),
       document.getElementById('btn-drive'),
       ...document.querySelectorAll('#recent-list .dest-item'),
-      ...document.querySelectorAll('#dest-list .dest-item')
+      ...document.querySelectorAll('#fav-list .dest-item')
     ];
     //  ★ 위치가 잡히면 buildHome 이 다시 돈다. 그때마다 맨 위로 튕기면
     //    모드를 고르다가 포커스를 잃는다 — '눌렀는데 안 먹네' 로 보인다.
@@ -3339,7 +3364,7 @@
         const el = homeFocusables[focusIndex];
         if (el && el.dataset && el.dataset.dest) {
           if (el.dataset.mine === '1') {
-            askRemoveFav(el.dataset.name);
+            askRemove(el.dataset.name, 'fav');
           } else {
             let d = null;
             try { d = JSON.parse(el.dataset.dest); } catch (err) {}
@@ -3350,6 +3375,15 @@
               focusHome(idx >= 0 ? idx : focusIndex);
             }
           }
+        }
+        e.preventDefault();
+      }
+      //  ★ ← 는 최근 목록에서 지우기. 한 키에 한 가지 뜻만 준다.
+      //      → 즐겨찾기 담기/지우기 · ← 최근 목록에서 지우기
+      else if (e.key === 'ArrowLeft') {
+        const el = homeFocusables[focusIndex];
+        if (el && el.dataset && el.dataset.recent === '1') {
+          askRemove(el.dataset.name, 'recent');
         }
         e.preventDefault();
       }
@@ -3468,6 +3502,7 @@
   //    실수로 두 번 눌릴 수도 있다. 이름을 보여주고 명확히 고르게 한다.
   //  ※ 기본 선택은 '취소' 다. 잘못 눌렀을 때 아무 일도 안 일어나는 쪽이 기본이어야 한다.
   let confirmTarget = null;
+  let confirmKind = 'fav';                // 'fav' = 즐겨찾기, 'recent' = 최근 목록
   let confirmPick = 0;                    // 0 = 취소, 1 = 지우기
 
   function paintConfirm() {
@@ -3477,10 +3512,12 @@
     yes.classList.toggle('focused', confirmPick === 1);
     (confirmPick === 0 ? no : yes).focus();
   }
-  function askRemoveFav(name) {
+  function askRemove(name, kind) {
     confirmTarget = name;
+    confirmKind = kind;
     confirmPick = 0;
-    document.getElementById('confirm-msg').textContent = `${name}\n즐겨찾기에서 지울까요?`;
+    const where = kind === 'recent' ? '최근 목록' : '즐겨찾기';
+    document.getElementById('confirm-msg').textContent = `${name}\n${where}에서 지울까요?`;
     document.getElementById('confirm-msg').style.whiteSpace = 'pre-line';
     document.getElementById('confirm-back').classList.remove('hidden');
     paintConfirm();
@@ -3492,7 +3529,8 @@
   }
   function doConfirm() {
     if (confirmPick === 1 && confirmTarget) {
-      removeFav(confirmTarget);
+      if (confirmKind === 'recent') removeRecent(confirmTarget);
+      else removeFav(confirmTarget);
       const keep = focusIndex;
       confirmTarget = null;
       document.getElementById('confirm-back').classList.add('hidden');
@@ -3571,6 +3609,7 @@
   }
 
   // ── 시작 ──
+  seedFavsOnce();
   buildHome();
   getLocation();
   startCompass();
