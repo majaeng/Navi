@@ -12,6 +12,12 @@
        ※ 안 되는 것 같으면 **무엇이 실행되고 있는지부터** 확인한다.
          고친 코드가 실행조차 안 되고 있을 수 있다.
        아래 두 줄과 화면 구석의 판 번호가 그 확인을 대신해준다. -->
+  <!-- ★★ 문지기(index.html)에만 매니페스트를 걸어놨더니, 앱으로 갈아끼우는
+       순간 그 연결이 사라졌다. iOS 는 그때 매니페스트를 못 찾는다.
+       → 공유 시트의 Glass Assist 가 죽는다.
+       ※ 화면을 갈아끼우는 구조에서는 **양쪽 다** 갖춰야 한다.
+         하나만 해두면 갈아끼운 뒤에 없어진다. -->
+  <link rel="manifest" href="manifest.webmanifest">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <title>KO-Navi</title>
@@ -329,7 +335,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v44 · 08-28</div>
+  <div class="build-tag" id="build-tag">v45 · 08-28</div>
 
   <!-- ★ 현재 위치를 즐겨찾기에 담을 수 있어야 한다.
        지금 서 있는 곳(숙소 정문·사무실 입구)은 주소로 검색해서 나오는 자리와
