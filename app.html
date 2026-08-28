@@ -268,6 +268,28 @@
     }
     .nav-help.hidden { opacity: 0; }
 
+    /* 지울지 묻는 창 */
+    .confirm-back {
+      position: absolute; inset: 0; z-index: 40;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.75);
+    }
+    .confirm-back.hidden { display: none; }
+    .confirm-box {
+      border: 3px solid #ffffff; border-radius: 18px; padding: 22px 26px;
+      background: rgba(0,0,0,0.9); max-width: 520px; text-align: center;
+    }
+    .confirm-msg { font-size: 24px; font-weight: 700; color: #fff; line-height: 1.4; }
+    .confirm-btns { display: flex; gap: 14px; justify-content: center; margin-top: 18px; }
+    .confirm-btn {
+      background: none; border: 3px solid rgba(255,255,255,0.55);
+      border-radius: 40px; padding: 10px 26px;
+      font-size: 22px; font-weight: 700; color: #fff; cursor: pointer;
+    }
+    .confirm-btn.focused { border-color: #5cc8ff; }
+    .confirm-btn.danger.focused { border-color: #ff6b6b; color: #ff8f8f; }
+    .confirm-hint { font-size: 16px; color: #9fb0c0; margin-top: 12px; }
+
     /* 로딩 */
     .loading-overlay {
       position: absolute; inset: 0; background: rgba(0,0,0,0.7);
@@ -297,7 +319,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v31 · 08-28</div>
+  <div class="build-tag" id="build-tag">v33 · 08-28</div>
 
   <!-- ★ 현재 위치를 즐겨찾기에 담을 수 있어야 한다.
        지금 서 있는 곳(숙소 정문·사무실 입구)은 주소로 검색해서 나오는 자리와
@@ -319,7 +341,7 @@
   </div>
   <div class="section-label" id="preset-label">즐겨찾기</div>
   <div class="dest-list" id="dest-list"></div>
-  <div class="hint">↑↓ 이동 · Enter 선택 · → 즐겨찾기 지우기</div>
+  <div class="hint">↑↓ 이동 · Enter 선택 · → 즐겨찾기 담기/지우기</div>
 </div>
 
 <!-- 검색 -->
@@ -397,6 +419,18 @@
 
   <!-- 뒤로 (Escape 키로도 동작, 버튼은 최소화) -->
   <button class="back-btn focusable" id="back-btn">✕</button>
+
+  <!-- 지울지 묻는 창 — 되돌릴 수 없는 일은 반드시 한 번 묻는다 -->
+  <div class="confirm-back hidden" id="confirm-back">
+    <div class="confirm-box">
+      <div class="confirm-msg" id="confirm-msg"></div>
+      <div class="confirm-btns">
+        <button class="confirm-btn" id="confirm-no">취소</button>
+        <button class="confirm-btn danger" id="confirm-yes">지우기</button>
+      </div>
+      <div class="confirm-hint">← → 이동 · Enter 선택</div>
+    </div>
+  </div>
 
   <!-- 로딩 -->
   <!-- ★ hidden 을 명시한다. 전에는 startNav 의 showLoading→hideLoading 이
@@ -543,9 +577,6 @@
   //    최근 목적지는 자동으로 쌓이지만 5개뿐이고 밀려난다 —
   //    넉 달 머무는 곳의 숙소·사무실이 밀려나면 곤란하다.
   //  ★ 담은 것은 맨 위에, 기본 목록은 그 아래에 둔다. 담은 게 없으면 예전과 같다.
-  let favPendingDelete = null;   // 지울지 물어본 즐겨찾기 이름
-  let favDeleteTimer = null;
-
   function loadFavs() {
     try { return JSON.parse(localStorage.getItem('ko_navi_favs') || '[]'); } catch { return []; }
   }
@@ -1591,7 +1622,13 @@
         const el = document.createElement('div');
         el.className = 'dest-item focusable';
         el.tabIndex = 0;
-        el.innerHTML = `<span class="icon">🕐</span><div><div class="name">${dest.name}</div><div class="addr" style="font-size:16px;color:#b8c8d8">${dest.addr}</div></div>`;
+        //  ★ → 로 담으려면 그 항목이 무엇인지 알아야 한다. 자료를 달아둔다.
+        el.dataset.name = dest.name;
+        el.dataset.dest = JSON.stringify(dest);
+        //  ★ 최근 항목에도 '이미 담긴 것인가' 를 달아둔다.
+        //    이게 없으면 담은 뒤에도 계속 '담기' 로만 동작해서 지울 수가 없었다.
+        el.dataset.mine = loadFavs().some(f => f.name === dest.name) ? '1' : '';
+        el.innerHTML = `<span class="icon">${loadFavs().some(f => f.name === dest.name) ? '★' : '🕐'}</span><div><div class="name">${dest.name}</div><div class="addr" style="font-size:16px;color:#b8c8d8">${dest.addr}</div></div>`;
         el.addEventListener('click', () => startNav(dest));
         recentList.appendChild(el);
       });
@@ -1609,6 +1646,7 @@
       el.className = 'dest-item focusable';
       el.tabIndex = 0;
       el.dataset.name = dest.name;
+      el.dataset.dest = JSON.stringify(dest);
       el.dataset.mine = favs.some(f => f.name === dest.name) ? '1' : '';
       el.innerHTML = `<span class="icon">${dest.icon}</span><div><div class="name">${dest.name}</div><div class="addr">${dest.addr}</div></div>`;
       el.addEventListener('click', () => startNav(dest));
@@ -3209,31 +3247,36 @@
     startCompass();   // 첫 조작에서 나침반 권한을 얻는다 (자동 호출은 막혀 있다)
     const active = document.querySelector('.screen.active')?.id;
 
+    //  ★ 묻는 창이 떠 있으면 그것부터. 뒤에 있는 화면이 반응하면 안 된다.
+    if (!document.getElementById('confirm-back').classList.contains('hidden')) {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        confirmPick = e.key === 'ArrowRight' ? 1 : 0; paintConfirm();
+      } else if (e.key === 'Enter') { doConfirm(); }
+      else if (e.key === 'Escape') { closeConfirm(); }
+      e.preventDefault();
+      return;
+    }
+
     if (active === 'screen-home') {
       if (e.key === 'ArrowDown') { focusHome(Math.min(focusIndex+1, homeFocusables.length-1)); e.preventDefault(); }
       else if (e.key === 'ArrowUp') { focusHome(Math.max(focusIndex-1, 0)); e.preventDefault(); }
-      //  ★ 담은 즐겨찾기는 → 로 지운다.
-      //    ※ 한 번에 지우지 않는다. 실수로 눌러 지워지면 되돌릴 길이 없다.
-      //      한 번 누르면 물어보고, 3초 안에 한 번 더 눌러야 지운다.
+      //  ★ → 하나로 담고 지운다.
+      //    담은 것이면 지울지 묻고, 아니면 담는다. 최근이든 기본이든 같다.
+      //    ※ 조작이 자리마다 다르면 외울 게 늘어난다. 뜻이 같으면 키도 같아야 한다.
       else if (e.key === 'ArrowRight') {
         const el = homeFocusables[focusIndex];
-        if (el && el.dataset && el.dataset.mine === '1') {
-          const nm = el.dataset.name;
-          const na = el.querySelector('.addr');
-          if (favPendingDelete === nm) {
-            removeFav(nm);
-            favPendingDelete = null;
-            clearTimeout(favDeleteTimer);
-            buildHome();
-            focusHome(Math.min(focusIndex, homeFocusables.length - 1));
+        if (el && el.dataset && el.dataset.dest) {
+          if (el.dataset.mine === '1') {
+            askRemoveFav(el.dataset.name);
           } else {
-            favPendingDelete = nm;
-            if (na) { na.dataset.was = na.textContent; na.textContent = '→ 한 번 더 누르면 지웁니다'; }
-            clearTimeout(favDeleteTimer);
-            favDeleteTimer = setTimeout(() => {
-              favPendingDelete = null;
-              if (na && na.dataset.was != null) na.textContent = na.dataset.was;
-            }, 3000);
+            let d = null;
+            try { d = JSON.parse(el.dataset.dest); } catch (err) {}
+            if (d) {
+              addFav(d);
+              buildHome();
+              const idx = homeFocusables.findIndex(x => x.dataset && x.dataset.name === d.name);
+              focusHome(idx >= 0 ? idx : focusIndex);
+            }
           }
         }
         e.preventDefault();
@@ -3339,6 +3382,49 @@
       }
     } catch (e) {}
     return null;
+  }
+
+  //  ══════════════════════════════════════════
+  //   지울지 묻는 창
+  //  ══════════════════════════════════════════
+  //  ★ 되돌릴 수 없는 일은 반드시 한 번 묻는다.
+  //    처음엔 '→ 두 번 누르기' 로 했는데, 무엇을 지우는지 안 보이고
+  //    실수로 두 번 눌릴 수도 있다. 이름을 보여주고 명확히 고르게 한다.
+  //  ※ 기본 선택은 '취소' 다. 잘못 눌렀을 때 아무 일도 안 일어나는 쪽이 기본이어야 한다.
+  let confirmTarget = null;
+  let confirmPick = 0;                    // 0 = 취소, 1 = 지우기
+
+  function paintConfirm() {
+    const no = document.getElementById('confirm-no');
+    const yes = document.getElementById('confirm-yes');
+    no.classList.toggle('focused', confirmPick === 0);
+    yes.classList.toggle('focused', confirmPick === 1);
+    (confirmPick === 0 ? no : yes).focus();
+  }
+  function askRemoveFav(name) {
+    confirmTarget = name;
+    confirmPick = 0;
+    document.getElementById('confirm-msg').textContent = `${name}\n즐겨찾기에서 지울까요?`;
+    document.getElementById('confirm-msg').style.whiteSpace = 'pre-line';
+    document.getElementById('confirm-back').classList.remove('hidden');
+    paintConfirm();
+  }
+  function closeConfirm() {
+    confirmTarget = null;
+    document.getElementById('confirm-back').classList.add('hidden');
+    focusHome(Math.min(focusIndex, homeFocusables.length - 1));
+  }
+  function doConfirm() {
+    if (confirmPick === 1 && confirmTarget) {
+      removeFav(confirmTarget);
+      const keep = focusIndex;
+      confirmTarget = null;
+      document.getElementById('confirm-back').classList.add('hidden');
+      buildHome();
+      focusHome(Math.min(keep, homeFocusables.length - 1));
+      return;
+    }
+    closeConfirm();
   }
 
   async function saveHereAsFav() {
