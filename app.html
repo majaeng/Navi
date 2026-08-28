@@ -297,10 +297,13 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v30 · 08-28</div>
+  <div class="build-tag" id="build-tag">v31 · 08-28</div>
 
-  <div class="location-box">
-    <div class="label">현재 위치</div>
+  <!-- ★ 현재 위치를 즐겨찾기에 담을 수 있어야 한다.
+       지금 서 있는 곳(숙소 정문·사무실 입구)은 주소로 검색해서 나오는 자리와
+       다를 때가 많다. 서 있는 그 자리를 그대로 담는 게 가장 정확하다. -->
+  <div class="location-box focusable" id="here-box" tabindex="0" role="button">
+    <div class="label">현재 위치 <span style="color:#7dd8ff">· Enter 로 즐겨찾기</span></div>
     <div class="value" id="current-location">위치 확인 중...</div>
   </div>
   <button class="search-btn focusable" id="search-open-btn" tabindex="0">
@@ -316,7 +319,7 @@
   </div>
   <div class="section-label" id="preset-label">즐겨찾기</div>
   <div class="dest-list" id="dest-list"></div>
-  <div class="hint">↑↓ 방향키 · Enter 선택</div>
+  <div class="hint">↑↓ 이동 · Enter 선택 · → 즐겨찾기 지우기</div>
 </div>
 
 <!-- 검색 -->
@@ -437,7 +440,13 @@
     { name: '경복궁',     addr: '서울 종로구 사직로 161',     lat: 37.5796, lng: 126.9770, icon: '🏯' },
     { name: '인천공항',   addr: '인천 중구 공항로 272',       lat: 37.4602, lng: 126.4407, icon: '✈️' },
   ];
+  //  ★ 청두 체류지. 두 주소 모두 지오코더로 풀면 **같은 지점**이다 —
+  //    번지(门牌号)까지만 알 수 있고 B座·1栋 은 단지 안쪽이라 어떤 지도도 모른다.
+  //    길안내로는 단지 앞까지 데려다주는 게 맞으므로 이대로 둔다.
+  //    이름만 다르게 달아 어느 동인지 본인이 알아보게 한다.
   const CN_PRESETS = [
+    { name: '吉瑞二路188号 B座 11층', addr: '成都市高新区 · 사무실', lat: 30.560576, lng: 104.059147, icon: '🏢' },
+    { name: '吉瑞二路188号 1栋 1단원', addr: '成都市高新区 · 숙소',  lat: 30.560576, lng: 104.059147, icon: '🏠' },
     { name: '天安门广场', addr: '北京市东城区',               lat: 39.9055, lng: 116.3976, icon: '🏛' },
     { name: '外滩',       addr: '上海市黄浦区中山东一路',     lat: 31.2397, lng: 121.4901, icon: '🌃' },
     { name: '西湖',       addr: '浙江省杭州市西湖区',         lat: 30.2590, lng: 120.1452, icon: '🌊' },
@@ -527,6 +536,43 @@
   function loadRecentDests() {
     try { return JSON.parse(localStorage.getItem('ko_navi_recent') || '[]'); } catch { return []; }
   }
+  //  ══════════════════════════════════════════
+  //   즐겨찾기 — 내가 담고 내가 지운다
+  //  ══════════════════════════════════════════
+  //  ★ 전에는 '즐겨찾기' 가 코드에 박힌 고정 목록이었다. 손댈 수가 없었다.
+  //    최근 목적지는 자동으로 쌓이지만 5개뿐이고 밀려난다 —
+  //    넉 달 머무는 곳의 숙소·사무실이 밀려나면 곤란하다.
+  //  ★ 담은 것은 맨 위에, 기본 목록은 그 아래에 둔다. 담은 게 없으면 예전과 같다.
+  let favPendingDelete = null;   // 지울지 물어본 즐겨찾기 이름
+  let favDeleteTimer = null;
+
+  function loadFavs() {
+    try { return JSON.parse(localStorage.getItem('ko_navi_favs') || '[]'); } catch { return []; }
+  }
+  function saveFavs(list) {
+    try { localStorage.setItem('ko_navi_favs', JSON.stringify(list)); } catch {}
+  }
+  //  ★ 담은 곳이 어느 나라인지는 **목적지 좌표**로 정한다.
+  //    내가 지금 어디 있느냐가 아니라 그곳이 어디냐가 기준이다.
+  //    (한국에서 청두 숙소를 미리 담아둘 수 있어야 한다)
+  //  ※ isInChina 가 이미 있다. 새 규칙을 만들지 않는다.
+  function favCountry(d) { return isInChina(d.lat, d.lng) ? 'cn' : 'kr'; }
+  function favsHere() {
+    const c = currentCountry();
+    return loadFavs().filter(f => favCountry(f) === c);
+  }
+  function isFav(d) {
+    return loadFavs().some(f => f.name === d.name);
+  }
+  function addFav(d) {
+    const list = loadFavs().filter(f => f.name !== d.name);
+    list.unshift({ name: d.name, addr: d.addr || '', lat: d.lat, lng: d.lng, icon: '★' });
+    saveFavs(list.slice(0, 12));
+  }
+  function removeFav(name) {
+    saveFavs(loadFavs().filter(f => f.name !== name));
+  }
+
   function saveRecentDest(dest) {
     let list = loadRecentDests().filter(d => d.name !== dest.name);
     list.unshift({ name: dest.name, addr: dest.addr, lat: dest.lat, lng: dest.lng, icon: '🕐' });
@@ -1533,7 +1579,9 @@
     const PRESETS = currentCountry() === 'cn' ? CN_PRESETS : KR_PRESETS;
 
     // 최근 목적지
-    const recents = loadRecentDests();
+    //  ※ 최근 목적지도 지금 있는 나라 것만 보여준다.
+    //    청두에서 서울 목록을 볼 이유가 없다.
+    const recents = loadRecentDests().filter(d => favCountry(d) === currentCountry());
     const recentSection = document.getElementById('recent-section');
     const recentList = document.getElementById('recent-list');
     recentList.innerHTML = '';
@@ -1551,19 +1599,24 @@
       recentSection.style.display = 'none';
     }
 
-    // 프리셋
+    // 즐겨찾기 = 내가 담은 것 + 기본 목록 (이름이 같으면 담은 쪽만)
+    const favs = favsHere();
+    const shown = favs.concat(PRESETS.filter(p => !favs.some(f => f.name === p.name)));
     const list = document.getElementById('dest-list');
     list.innerHTML = '';
-    PRESETS.forEach((dest) => {
+    shown.forEach((dest) => {
       const el = document.createElement('div');
       el.className = 'dest-item focusable';
       el.tabIndex = 0;
+      el.dataset.name = dest.name;
+      el.dataset.mine = favs.some(f => f.name === dest.name) ? '1' : '';
       el.innerHTML = `<span class="icon">${dest.icon}</span><div><div class="name">${dest.name}</div><div class="addr">${dest.addr}</div></div>`;
       el.addEventListener('click', () => startNav(dest));
       list.appendChild(el);
     });
 
     homeFocusables = [
+      document.getElementById('here-box'),
       document.getElementById('search-open-btn'),
       document.getElementById('btn-foot'),
       document.getElementById('btn-drive'),
@@ -3159,6 +3212,32 @@
     if (active === 'screen-home') {
       if (e.key === 'ArrowDown') { focusHome(Math.min(focusIndex+1, homeFocusables.length-1)); e.preventDefault(); }
       else if (e.key === 'ArrowUp') { focusHome(Math.max(focusIndex-1, 0)); e.preventDefault(); }
+      //  ★ 담은 즐겨찾기는 → 로 지운다.
+      //    ※ 한 번에 지우지 않는다. 실수로 눌러 지워지면 되돌릴 길이 없다.
+      //      한 번 누르면 물어보고, 3초 안에 한 번 더 눌러야 지운다.
+      else if (e.key === 'ArrowRight') {
+        const el = homeFocusables[focusIndex];
+        if (el && el.dataset && el.dataset.mine === '1') {
+          const nm = el.dataset.name;
+          const na = el.querySelector('.addr');
+          if (favPendingDelete === nm) {
+            removeFav(nm);
+            favPendingDelete = null;
+            clearTimeout(favDeleteTimer);
+            buildHome();
+            focusHome(Math.min(focusIndex, homeFocusables.length - 1));
+          } else {
+            favPendingDelete = nm;
+            if (na) { na.dataset.was = na.textContent; na.textContent = '→ 한 번 더 누르면 지웁니다'; }
+            clearTimeout(favDeleteTimer);
+            favDeleteTimer = setTimeout(() => {
+              favPendingDelete = null;
+              if (na && na.dataset.was != null) na.textContent = na.dataset.was;
+            }, 3000);
+          }
+        }
+        e.preventDefault();
+      }
       else if (e.key === 'Enter') {
         //  ★ 전에는 여기서 setProfile 을 직접 부르고, 버튼에는 click 처리기도
         //    따로 달려 있었다. **같은 일을 두 갈래로** 하고 있었던 것이다.
@@ -3180,6 +3259,16 @@
       }
       else if (e.key === 'Enter' && searchResults[searchFocusIndex]) {
         selectSearchResult(searchResults[searchFocusIndex]); e.preventDefault();
+      }
+      //  ★ → 로 즐겨찾기에 담는다. 담는 건 되돌리기 쉬우니 확인을 묻지 않는다.
+      //    (지울 때는 두 번 눌러야 한다 — 그건 되돌릴 길이 없으니까)
+      else if (e.key === 'ArrowRight' && searchResults[searchFocusIndex]) {
+        const d = searchResults[searchFocusIndex];
+        addFav(d);
+        const el = document.getElementById('search-status');
+        el.className = 'search-empty';
+        el.textContent = `★ ${d.name} — 즐겨찾기에 담았습니다`;
+        e.preventDefault();
       }
       else if (e.key === 'Escape') { closeSearch(); e.preventDefault(); }
     }
@@ -3221,6 +3310,62 @@
     showScreen('screen-home');
     focusHome(0);
   }
+
+  //  ★ 지금 서 있는 자리를 담는다.
+  //    이름은 좌표를 되짚어(역지오코딩) 주소로 만든다 —
+  //    '현재 위치 3' 같은 이름은 나중에 어디였는지 알 수가 없다.
+  //  ※ 되짚기에 실패해도 담는 것 자체는 성공시킨다. 이름만 좌표가 된다.
+  //    이름을 못 얻었다고 저장을 포기하면 정작 필요한 걸 잃는다.
+  async function reverseName(lat, lng) {
+    try {
+      if (currentCountry() === 'cn') {
+        const g = wgs84ToGcj02(lat, lng);
+        const d = await jsonp(`https://apis.map.qq.com/ws/geocoder/v1/?location=${g.lat},${g.lng}&key=${TENCENT_KEY}`);
+        if (d.status === 0 && d.result) {
+          const f = d.result.formatted_addresses || {};
+          return { name: f.recommend || d.result.address || '', addr: d.result.address || '' };
+        }
+      } else {
+        const u = 'https://apis.openapi.sk.com/tmap/geo/reversegeocoding?version=1&format=json'
+                + `&coordType=WGS84GEO&addressType=A10&lat=${lat}&lon=${lng}`;
+        const r = await fetch(u, { headers: { appKey: TMAP_KEY } });
+        const t = await r.text();
+        if (r.ok && t.trim()) {
+          const d = JSON.parse(t);
+          const a = d.addressInfo || {};
+          const road = [a.city_do, a.gu_gun, a.roadName, a.buildingIndex].filter(Boolean).join(' ');
+          return { name: a.buildingName || road || '', addr: a.fullAddress || road || '' };
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  async function saveHereAsFav() {
+    const box = document.getElementById('here-box');
+    const label = box && box.querySelector('.label');
+    if (!currentPos) {
+      if (label) label.innerHTML = '현재 위치 <span style="color:#ffd27a">· 위치를 아직 못 잡았습니다</span>';
+      return;
+    }
+    const got = await reverseName(currentPos.lat, currentPos.lng);
+    const stamp = new Date().toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const name = (got && got.name) ? got.name : `현재 위치 ${stamp}`;
+    addFav({ name, addr: (got && got.addr) || `${currentPos.lat.toFixed(5)}, ${currentPos.lng.toFixed(5)}`,
+             lat: currentPos.lat, lng: currentPos.lng });
+    buildHome();
+    focusHome(0);
+    const b2 = document.getElementById('here-box');
+    const l2 = b2 && b2.querySelector('.label');
+    if (l2) {
+      l2.innerHTML = `현재 위치 <span style="color:#8dffab">· ★ ${name} 담았습니다</span>`;
+      setTimeout(() => {
+        const l3 = document.getElementById('here-box');
+        if (l3) l3.querySelector('.label').innerHTML = '현재 위치 <span style="color:#7dd8ff">· Enter 로 즐겨찾기</span>';
+      }, 2500);
+    }
+  }
+  document.getElementById('here-box').addEventListener('click', saveHereAsFav);
 
   document.getElementById('search-open-btn').addEventListener('click', openSearch);
   document.getElementById('search-back-btn').addEventListener('click', closeSearch);
