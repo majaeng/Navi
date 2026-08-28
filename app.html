@@ -72,20 +72,29 @@
     .dest-item .name { font-size: 17px; font-weight: 600; }
     .dest-item .addr { font-size: 16px; color: #b8c8d8; margin-top: 1px; }
     .hint { font-size: 16px; color: #9fb0c0; text-align: center; }
+    /*  ★★ "모드가 바뀔 때도 있고 안 바뀔 때도 있다" 의 원인이 여기 있었다.
+        옛 값:  포커스 = 테두리 하늘색 · 배경 하늘 8%
+                선택됨 = 테두리 하늘색 60% · 배경 하늘 15%
+        더하기 화면에서 이 둘은 **구분이 안 된다.** 실제로는 바뀌었는데
+        바뀐 것처럼 보이지 않았다.
+        ※ 상태가 두 가지면 표시도 두 가지여야 한다. 같은 색의 농담 차이는
+          이 화면에서 '같은 것' 이다. */
     .mode-btn {
-      flex: 1; background: rgba(255,255,255,0.04); border: 1.5px solid rgba(255,255,255,0.10);
-      border-radius: 12px; padding: 11px 10px; font-size: 17px; font-weight: 600;
-      cursor: pointer; color: #b8c8d8; transition: all 150ms; display: flex;
+      flex: 1; background: none; border: 2px solid rgba(255,255,255,0.55);
+      border-radius: 12px; padding: 11px 10px; font-size: 17px; font-weight: 700;
+      cursor: pointer; color: #ffffff; transition: none; display: flex;
       align-items: center; justify-content: center; gap: 6px;
     }
+    /* 포커스 = '지금 여기를 가리키고 있다' → 하늘색 굵은 테두리 */
     .mode-btn:focus, .mode-btn.focused {
-      border-color: #5cc8ff; background: rgba(92,200,255,0.08); outline: none; color: #fff;
+      border-color: #5cc8ff; border-width: 3px; outline: none;
     }
+    /* 선택됨 = '지금 이 모드다' → 초록 글자. 색으로 구분한다 */
     .mode-btn.active-mode {
-      border-color: rgba(92,200,255,0.6); background: rgba(92,200,255,0.15); color: #fff;
+      color: #8dffab; border-color: #8dffab; border-width: 3px;
     }
     .mode-btn.active-mode.focused {
-      box-shadow: 0 0 0 1px rgba(92,200,255,0.4);
+      border-color: #5cc8ff;      /* 테두리는 포커스, 글자는 선택 — 동시에 읽힌다 */
     }
     .section-label { font-size: 16px; color: #a8b8c8; text-transform: uppercase; letter-spacing: 0.8px; padding: 0 2px; }
 
@@ -269,7 +278,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v9 · 08-27</div>
+  <div class="build-tag" id="build-tag">v10 · 08-27</div>
 
   <div class="location-box">
     <div class="label">현재 위치</div>
@@ -636,7 +645,16 @@
 
     //  ★ 뺀 뒤에는 어두워지므로 다시 키운다. 안 키우면 '색은 맞는데 안 보이는'
     //    상태가 된다 — 오늘 흰 선에서 겪은 것과 같은 실수다.
-    const gain = 2.3;
+    //  ★ 배율을 고정하지 않는다. 타일마다 **가장 밝은 곳이 255 가 되도록** 맞춘다.
+    //    고정 배율은 스타일이 바뀌면 또 어긋난다 (dark-v11 에서 그랬다).
+    //    ※ 손잡이를 두지 않는다. 돌릴 게 없으면 잘못 돌릴 일도 없다.
+    let peak = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      const lum = (px[i] * 3 + px[i + 1] * 6 + px[i + 2]) >> 3;
+      if (lum > peak) peak = lum;
+    }
+    const room = Math.max(8, peak - base);
+    const gain = Math.min(6, 255 / room);
     for (let i = 0; i < px.length; i += 4) {
       for (let k = 0; k < 3; k++) {
         const v = (px[i + k] - base) * gain;
@@ -660,7 +678,15 @@
       if (keys.length > RASTER_MAX) delete rasterCache[keys[0]];
     };
     img.onerror = () => { rasterLoading.delete(key); };
-    img.src = `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/${z}/${tx}/${ty}`
+    //  ★★ dark-v11 을 쓰다가 "회색이라 거의 안 보인다" 가 나왔다. 재봤다:
+    //      dark-v11             배경 38 · 가장 밝은 곳 40  → 남는 여지 2
+    //      navigation-night-v1  배경  2 · 가장 밝은 곳 138 → 남는 여지 136
+    //    dark-v11 은 배경을 빼면 **남는 게 2** 다. 2.3배를 키워도 5 —
+    //    사실상 검정이다. 애초에 '은은한 배경지도' 용 스타일이라 그렇다.
+    //  ★ navigation-night-v1 은 내비게이션용이다. 배경이 거의 검정이고
+    //    도로가 밝다. 이 화면에 맞는 건 이것뿐이다.
+    //  ※ 눈으로 짐작하지 말고 픽셀을 세어볼 것. 68배 차이였다.
+    img.src = `https://api.mapbox.com/styles/v1/mapbox/navigation-night-v1/tiles/256/${z}/${tx}/${ty}`
             + `?access_token=${MAPBOX_TOKEN}`;
   }
 
@@ -1144,7 +1170,9 @@
       ...document.querySelectorAll('#recent-list .dest-item'),
       ...document.querySelectorAll('#dest-list .dest-item')
     ];
-    focusHome(0);
+    //  ★ 위치가 잡히면 buildHome 이 다시 돈다. 그때마다 맨 위로 튕기면
+    //    모드를 고르다가 포커스를 잃는다 — '눌렀는데 안 먹네' 로 보인다.
+    focusHome(Math.min(focusIndex || 0, homeFocusables.length - 1));
   }
 
   function focusHome(idx) {
@@ -1652,6 +1680,12 @@
   // ── 이동 수단 선택 ──
   function setProfile(mode) {
     navProfile = mode;
+    //  ★ 색만으로 알리지 않는다. 밝은 데서는 색이 씻긴다.
+    //    선택된 쪽에 ● 를 붙여 글자로도 남긴다.
+    const foot = document.getElementById('btn-foot');
+    const drive = document.getElementById('btn-drive');
+    if (foot)  foot.textContent  = (mode === 'foot'    ? '● ' : '') + '🚶 도보';
+    if (drive) drive.textContent = (mode === 'driving' ? '● ' : '') + '🚗 드라이브';
     // ★ 모드를 바꾸면 안내 상태를 비운다.
     //   문턱·안내거리·소요시간 계산이 전부 달라지므로 옛 값이 남으면 안 된다.
     spokenDistBucket = null; spokenBucketVal = null;
@@ -2543,10 +2577,12 @@
       if (e.key === 'ArrowDown') { focusHome(Math.min(focusIndex+1, homeFocusables.length-1)); e.preventDefault(); }
       else if (e.key === 'ArrowUp') { focusHome(Math.max(focusIndex-1, 0)); e.preventDefault(); }
       else if (e.key === 'Enter') {
-        if (focusIndex === 0) openSearch();
-        else if (focusIndex === 1) setProfile('foot');
-        else if (focusIndex === 2) setProfile('driving');
-        else homeFocusables[focusIndex].click();
+        //  ★ 전에는 여기서 setProfile 을 직접 부르고, 버튼에는 click 처리기도
+        //    따로 달려 있었다. **같은 일을 두 갈래로** 하고 있었던 것이다.
+        //    focusIndex 와 실제 DOM 포커스가 어긋나면 서로 다른 모드를 눌러
+        //    결과가 오락가락한다.
+        //  ※ 길이 하나면 어긋날 수가 없다. 클릭 한 갈래로 모은다.
+        if (homeFocusables[focusIndex]) homeFocusables[focusIndex].click();
         e.preventDefault();
       }
     }
