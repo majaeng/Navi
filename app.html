@@ -348,7 +348,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v47 · 08-28</div>
+  <div class="build-tag" id="build-tag">v48 · 08-28</div>
 
   <!-- ★ 현재 위치를 즐겨찾기에 담을 수 있어야 한다.
        지금 서 있는 곳(숙소 정문·사무실 입구)은 주소로 검색해서 나오는 자리와
@@ -3728,6 +3728,40 @@
       ? '📡 ' + hhmm(Date.now()) + ' 확인 · 마지막 목적지 ' + (dest.name || '?') + ' (' + hhmm(dest.at) + ')'
       : '📡 ' + hhmm(Date.now()) + ' 확인 · 받은 목적지 없음';
   }
+
+  //  ══════════════════════════════════════════
+  //   ★★ 저장본으로 열렸으면 스스로 낫는다
+  //  ══════════════════════════════════════════
+  //   문지기(index.html)는 GitHub 에서 앱을 못 받으면 **예전에 저장해둔 사본**으로 연다.
+  //   길찾기 앱이 인터넷 없다고 아예 안 켜지면 곤란하니 넣어둔 대비책이다.
+  //
+  //   ★ 그런데 그 상태로 **머물러 있었다.** 망이 돌아와도 옛 판 그대로였고,
+  //     릴레이도 못 부르니 공유해도 아무 일이 없었다. 2026-08-28 밤을 이걸로 버렸다.
+  //   ※ 대비책은 '버티는 것' 까지만 하고, 조건이 나아지면 **스스로 빠져나와야** 한다.
+  //     빠져나올 길이 없는 대비책은 고장을 숨긴다.
+  //
+  //   판 번호 옆에 ' · 저장본' 이 붙어 있으면 그 상태다. 1분마다 원본을 다시 받아보고,
+  //   받아지면 화면을 다시 연다 (그러면 문지기가 새 판을 가져온다).
+  //   ※ 안내 중에는 다시 열지 않는다. 길 가는 도중에 화면이 끊기면 안 된다.
+  (function healFromCache() {
+    const tag = document.getElementById('build-tag');
+    if (!tag || tag.textContent.indexOf('저장본') < 0) return;
+
+    const APP = 'https://majaeng.github.io/Navi/app.html';
+    setInterval(function () {
+      const navOpen = document.getElementById('screen-nav');
+      if (navOpen && navOpen.classList.contains('active')) return;   // 안내 중이면 건드리지 않는다
+      fetch(APP + '?t=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.text() : null; })
+        .then(function (html) {
+          //  ※ 받아졌는지만 보지 않는다. 내용이 앱인지까지 본다 —
+          //    공유기 로그인 화면 같은 것이 200 으로 올 수 있다.
+          if (!html || html.indexOf('<script') < 0) return;
+          location.reload();
+        })
+        .catch(function () {});   // 아직 망이 안 돌아온 것뿐이다. 다음 차례에 다시 본다.
+    }, 60000);
+  })();
 
   // ── 시작 ──
   seedFavsOnce();
