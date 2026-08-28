@@ -297,7 +297,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v26 · 08-27</div>
+  <div class="build-tag" id="build-tag">v27 · 08-27</div>
 
   <div class="location-box">
     <div class="label">현재 위치</div>
@@ -1465,8 +1465,40 @@
     document.getElementById(id).classList.add('active');
   }
 
+  //  ══════════════════════════════════════════
+  //   시험용 위치 — 주소 끝에 ?at=위도,경도
+  //  ══════════════════════════════════════════
+  //  ★ 청두에 가기 전에 청두에서 어떻게 도는지 눈으로 보려고 넣었다.
+  //    이 값이 있으면 GPS 대신 이 자리에 있는 것처럼 돈다 —
+  //    검색(텐센트)·경로(텐센트)·지도·나라 판정까지 전부 실제와 같게 움직인다.
+  //
+  //    예)  ...ko-navi.html?at=30.6589,104.0657     (청두 천부광장)
+  //
+  //  ※ **켜져 있다는 걸 반드시 화면에 알린다.** 시험 위치인 줄 모르고
+  //    "GPS 가 이상하다" 고 헤매면 안 된다. 오늘 그런 걸로 반나절을 썼다.
+  //  ※ 값이 없으면 아무 일도 안 한다. 평소 동작에 손대지 않는다.
+  let testPos = null;
+  (function readTestPos() {
+    try {
+      const m = (location.search || '').match(/[?&]at=(-?[\d.]+),(-?[\d.]+)/);
+      if (!m) return;
+      const lat = parseFloat(m[1]), lng = parseFloat(m[2]);
+      if (!isFinite(lat) || !isFinite(lng)) return;
+      testPos = { lat, lng };
+    } catch (e) {}
+  })();
+
   // ── GPS ──
   function getLocation() {
+    if (testPos) {
+      currentPos = { lat: testPos.lat, lng: testPos.lng };
+      const el = document.getElementById('current-location');
+      if (el) el.textContent = `🧪 시험 위치 ${testPos.lat.toFixed(4)}, ${testPos.lng.toFixed(4)}`;
+      const tag = document.getElementById('build-tag');
+      if (tag) { tag.textContent += ' · 시험'; tag.style.color = '#ffd27a'; }
+      buildHome();
+      return;
+    }
     if (!navigator.geolocation) { fallbackPos(); return; }
     navigator.geolocation.getCurrentPosition(
       pos => {
@@ -2727,6 +2759,12 @@
   let lastRerouteAt = 0;
 
   function startTracking(dest) {
+    //  ★ 시험 위치일 때는 GPS 를 켜지 않는다. 켜면 진짜 내 자리로 튀어
+    //    청두를 보려던 게 서울로 돌아온다.
+    if (testPos) {
+      setNavFlag('routeLoading', false);
+      return;
+    }
     //  ※ 여기서 미리 켜두지 않는다. 첫 위치가 올 때까지는
     //    '경로 계산 중' 이 이미 떠 있으므로 두 번 말할 필요가 없다.
     if (watchId !== null) navigator.geolocation.clearWatch(watchId);
