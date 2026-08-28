@@ -88,6 +88,19 @@
     .dest-item .name { font-size: 17px; font-weight: 600; }
     .dest-item .addr { font-size: 16px; color: #b8c8d8; margin-top: 1px; }
     .hint { font-size: 16px; color: #9fb0c0; text-align: center; }
+    /*  ── 즐겨찾기 나라 탭 ──
+        ★ 색만으로 알리지 않는다. 고른 쪽에 ● 를 붙인다.
+          예전에 포커스와 선택을 둘 다 옅은 하늘색으로 뒀다가
+          "모드가 안 바뀐다" 가 나왔다. 글자로도 남겨야 한다.
+        ★ 반투명을 쓰지 않는다. 안 고른 쪽은 흐리게가 아니라 **어두운 회색**이다.
+          더하기 화면에서 알파 0.5 는 '연하게' 가 아니라 배경보다 어두워지는 것이다. */
+    .fav-tabs {
+      display: flex; gap: 18px; padding: 6px 4px; border-radius: 10px;
+      border: 2px solid transparent; cursor: pointer;
+    }
+    .fav-tabs:focus, .fav-tabs.focused { outline: none; border-color: #5cc8ff; }
+    .fav-tabs .tab { font-size: 17px; font-weight: 700; color: #6b7a88; }
+    .fav-tabs .tab.on { color: #fff; }
     /*  ★★ "모드가 바뀔 때도 있고 안 바뀔 때도 있다" 의 원인이 여기 있었다.
         옛 값:  포커스 = 테두리 하늘색 · 배경 하늘 8%
                 선택됨 = 테두리 하늘색 60% · 배경 하늘 15%
@@ -335,7 +348,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v45 · 08-28</div>
+  <div class="build-tag" id="build-tag">v46 · 08-28</div>
 
   <!-- ★ 현재 위치를 즐겨찾기에 담을 수 있어야 한다.
        지금 서 있는 곳(숙소 정문·사무실 입구)은 주소로 검색해서 나오는 자리와
@@ -363,7 +376,17 @@
        ※ 이름표가 사실과 달라지면 화면을 믿을 수 없게 된다. 칸을 나눈다. -->
   <div id="fav-section" style="display:none">
     <div class="section-label">즐겨찾기</div>
+    <!-- ★ 나라 탭. 청두에 있어도 서울 즐겨찾기를 볼 수 있어야 한다.
+         ※ ←→ 는 이미 담기·지우기에 쓰고 있어서 새 키를 만들지 않는다.
+           대신 **이 줄에 커서가 올라와 있을 때만** ←→ 가 탭을 바꾼다.
+           한 키의 뜻이 자리마다 달라지지만, 이 줄에는 담을 것도 지울 것도
+           없으므로 헷갈릴 자리가 없다. -->
+    <div class="fav-tabs focusable" id="fav-tabs" tabindex="0" role="button">
+      <span class="tab" id="fav-tab-kr">한국</span>
+      <span class="tab" id="fav-tab-cn">중국</span>
+    </div>
     <div class="dest-list" id="fav-list"></div>
+    <div class="hint" id="fav-empty" style="display:none">이 나라에 담아둔 곳이 없습니다</div>
   </div>
   <div class="hint" id="empty-hint" style="display:none">폰에서 목적지를 보내면 여기 남습니다</div>
 
@@ -638,10 +661,13 @@
   //    (한국에서 청두 숙소를 미리 담아둘 수 있어야 한다)
   //  ※ isInChina 가 이미 있다. 새 규칙을 만들지 않는다.
   function favCountry(d) { return isInChina(d.lat, d.lng) ? 'cn' : 'kr'; }
-  function favsHere() {
-    const c = currentCountry();
-    return loadFavs().filter(f => favCountry(f) === c);
-  }
+
+  //  ★ 지금 보고 있는 즐겨찾기 탭. **있는 곳과 별개**다.
+  //    청두에 있어도 서울 목록을 봐야 할 때가 있다 (다음 출장, 돌아갈 집).
+  //    ※ 처음 열 때만 있는 나라로 맞추고, 그 뒤로는 고른 쪽을 지킨다.
+  //      화면을 다시 그릴 때마다 되돌아가면 "눌렀는데 안 먹네" 가 된다.
+  let favTab = null;
+  function favsOf(c) { return loadFavs().filter(f => favCountry(f) === c); }
   function isFav(d) {
     return loadFavs().some(f => f.name === d.name);
   }
@@ -1709,7 +1735,34 @@
     }
 
     //  ★ 내가 담은 것과 기본 목록은 **다른 것**이다. 칸을 나눠 그린다.
-    const favs = favsHere();
+    //  ※ 즐겨찾기는 최근 목적지와 달리 **나라로 걸러 숨기지 않는다.** 탭으로 고른다.
+    //  ★★ `if (favTab === null) favTab = currentCountry()` 로 했다가 시험에서 걸렸다.
+    //    앱이 처음 그려질 때는 **아직 위치를 모른다.** currentCountry() 가 그때
+    //    무조건 'kr' 을 준다. 그 값으로 잠가버리면 **청두에서 열어도 한국 탭**이 된다.
+    //    → 위치를 알고 난 뒤에 잠근다. 그 전에는 잠깐 한국으로 보여주기만 한다.
+    //    ※ 기본값을 정할 때는 **그 값을 알 수 있는 시점인지**부터 본다.
+    if (favTab === null && currentPos) favTab = currentCountry();
+    const tabNow = favTab !== null ? favTab : 'kr';
+    const favKr = favsOf('kr'), favCn = favsOf('cn');
+    const favs = tabNow === 'cn' ? favCn : favKr;
+
+    //  탭 칠하기 — 고른 쪽에 ● 를 붙인다. 색만으로 알리지 않는다.
+    const tabKr = document.getElementById('fav-tab-kr');
+    const tabCn = document.getElementById('fav-tab-cn');
+    tabKr.textContent = (tabNow === 'kr' ? '● ' : '') + '한국 ' + favKr.length;
+    tabCn.textContent = (tabNow === 'cn' ? '● ' : '') + '중국 ' + favCn.length;
+    tabKr.classList.toggle('on', tabNow === 'kr');
+    tabCn.classList.toggle('on', tabNow === 'cn');
+    //  Enter 와 손가락으로도 바뀌게 한다. 안경은 ←→ 로 쓰지만
+    //  사파리에서 시험할 때 눌러볼 길이 없으면 확인을 못 한다.
+    //  ※ addEventListener 를 쓰면 화면을 다시 그릴 때마다 쌓인다. onclick 으로 갈아끼운다.
+    tabKr.onclick = e => { e.stopPropagation(); favTab = 'kr'; buildHome(); };
+    tabCn.onclick = e => { e.stopPropagation(); favTab = 'cn'; buildHome(); };
+    document.getElementById('fav-tabs').onclick = () => {
+      favTab = tabNow === 'kr' ? 'cn' : 'kr'; buildHome();
+      const b = homeFocusables.findIndex(x => x && x.id === 'fav-tabs');
+      if (b >= 0) focusHome(b);
+    };
     function paintList(boxId, items, mine) {
       const box = document.getElementById(boxId);
       box.innerHTML = '';
@@ -1728,12 +1781,18 @@
         inner.appendChild(el);
       });
     }
-    //  담은 게 없으면 그 칸을 아예 안 보여준다. 빈 이름표만 남기지 않는다.
-    document.getElementById('fav-section').style.display = favs.length ? 'block' : 'none';
+    //  ★ 한쪽이라도 담긴 게 있으면 칸을 보여준다.
+    //    보고 있는 탭이 비었다고 칸을 숨기면 **탭 자체에 갈 수가 없어** 반대쪽으로 못 넘어간다.
+    //    (담은 게 없을 때만 칸을 숨긴다는 예전 규칙을 그대로 두면 여기서 갇힌다.)
+    const anyFav = favKr.length + favCn.length > 0;
+    document.getElementById('fav-section').style.display = anyFav ? 'block' : 'none';
     paintList('fav-list', favs, true);
+    //  보고 있는 탭만 비었으면 그렇다고 알린다 — 빈 자리를 말없이 두지 않는다.
+    const fe = document.getElementById('fav-empty');
+    if (fe) fe.style.display = (anyFav && !favs.length) ? 'block' : 'none';
     //  둘 다 비었으면 어떻게 담는지 알려준다. 빈 화면만 두지 않는다.
     const eh = document.getElementById('empty-hint');
-    if (eh) eh.style.display = (!favs.length && !recents.length) ? 'block' : 'none';
+    if (eh) eh.style.display = (!anyFav && !recents.length) ? 'block' : 'none';
 
     //  ★ 커서가 도는 순서 = 화면에 보이는 순서. 어긋나면 어지럽다.
     homeFocusables = [
@@ -1741,8 +1800,11 @@
       document.getElementById('btn-foot'),
       document.getElementById('btn-drive'),
       ...document.querySelectorAll('#recent-list .dest-item'),
+      //  ★ 탭 줄도 커서가 서는 자리다. 칸이 보일 때만 넣는다 —
+      //    안 보이는 것에 커서가 서면 "눌렀는데 아무 일도 안 난다" 가 된다.
+      ...(anyFav ? [document.getElementById('fav-tabs')] : []),
       ...document.querySelectorAll('#fav-list .dest-item')
-    ];
+    ].filter(Boolean);
     //  ★ 위치가 잡히면 buildHome 이 다시 돈다. 그때마다 맨 위로 튕기면
     //    모드를 고르다가 포커스를 잃는다 — '눌렀는데 안 먹네' 로 보인다.
     focusHome(Math.min(focusIndex || 0, homeFocusables.length - 1));
@@ -3375,6 +3437,21 @@
       //  ★ → 하나로 담고 지운다.
       //    담은 것이면 지울지 묻고, 아니면 담는다. 최근이든 기본이든 같다.
       //    ※ 조작이 자리마다 다르면 외울 게 늘어난다. 뜻이 같으면 키도 같아야 한다.
+      //  ★ 탭 줄에 커서가 있으면 ←→ 는 나라 바꾸기다.
+      //    담을 것도 지울 것도 없는 자리라 뜻이 겹치지 않는다.
+      //    ※ 아래 두 가지(담기·최근 지우기)보다 **먼저** 걸러야 한다.
+      //      순서가 뒤바뀌면 탭에서 → 를 눌렀을 때 엉뚱한 것이 담긴다.
+      else if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft')
+               && homeFocusables[focusIndex]
+               && homeFocusables[focusIndex].id === 'fav-tabs') {
+        favTab = (e.key === 'ArrowRight') ? 'cn' : 'kr';
+        buildHome();
+        //  ※ 다시 그린 뒤 커서를 탭 줄에 그대로 둔다. 목록 길이가 바뀌어
+        //    번호로 되찾으면 딴 데로 튄다. 무엇인지로 찾는다.
+        const back = homeFocusables.findIndex(x => x && x.id === 'fav-tabs');
+        focusHome(back >= 0 ? back : focusIndex);
+        e.preventDefault();
+      }
       else if (e.key === 'ArrowRight') {
         const el = homeFocusables[focusIndex];
         if (el && el.dataset && el.dataset.dest) {
