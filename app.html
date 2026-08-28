@@ -329,7 +329,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v41 · 08-28</div>
+  <div class="build-tag" id="build-tag">v44 · 08-28</div>
 
   <!-- ★ 현재 위치를 즐겨찾기에 담을 수 있어야 한다.
        지금 서 있는 곳(숙소 정문·사무실 입구)은 주소로 검색해서 나오는 자리와
@@ -344,9 +344,6 @@
     <div class="label">현재 위치 <span style="color:#7dd8ff">· Enter 로 즐겨찾기</span></div>
     <div class="value" id="current-location">위치 확인 중...</div>
   </div>
-  <button class="search-btn focusable" id="search-open-btn" tabindex="0">
-    <span>🔍</span><span>장소 검색...</span>
-  </button>
   <div style="display:flex;gap:8px">
     <button class="mode-btn focusable active-mode" id="btn-foot" tabindex="0">🚶 도보</button>
     <button class="mode-btn focusable" id="btn-drive" tabindex="0">🚗 드라이브</button>
@@ -362,7 +359,19 @@
     <div class="section-label">즐겨찾기</div>
     <div class="dest-list" id="fav-list"></div>
   </div>
-  <div class="hint" id="empty-hint" style="display:none">검색해서 → 로 담아두세요</div>
+  <div class="hint" id="empty-hint" style="display:none">폰에서 목적지를 보내면 여기 남습니다</div>
+
+  <!-- ══════════════════════════════════════════
+       ★ 장소 검색을 홈에서 뺐다
+       ══════════════════════════════════════════
+       안경에는 자판이 없어 검색을 칠 수가 없다. 사파리는 시험용으로만 쓰므로
+       검색 화면은 실제로 쓰이는 길이 아니다.
+       목적지는 이렇게 들어온다:
+         폰에서 보냄 → 안경이 5초 안에 받아 안내 시작 → 최근 목적지에 남음
+                    → → 로 즐겨찾기에 담기
+       ※ 쓰지 않는 것을 화면에 두지 않는다. 20° 화면에서는 한 줄도 비싸다.
+       ※ 검색 화면 자체는 코드에 남아 있다 — 지워서 얻을 게 없고,
+         나중에 자판이 생기면 버튼만 되살리면 된다. -->
 
   </div>
   <div class="hint">↑↓ 이동 · Enter 선택 · → 즐겨찾기 · ← 최근 지우기</div>
@@ -1720,9 +1729,9 @@
     const eh = document.getElementById('empty-hint');
     if (eh) eh.style.display = (!favs.length && !recents.length) ? 'block' : 'none';
 
+    //  ★ 커서가 도는 순서 = 화면에 보이는 순서. 어긋나면 어지럽다.
     homeFocusables = [
       document.getElementById('here-box'),
-      document.getElementById('search-open-btn'),
       document.getElementById('btn-foot'),
       document.getElementById('btn-drive'),
       ...document.querySelectorAll('#recent-list .dest-item'),
@@ -3567,7 +3576,6 @@
   }
   document.getElementById('here-box').addEventListener('click', saveHereAsFav);
 
-  document.getElementById('search-open-btn').addEventListener('click', openSearch);
   document.getElementById('search-back-btn').addEventListener('click', closeSearch);
   document.getElementById('back-btn').addEventListener('click', () => { stopNav(); showScreen('screen-home'); buildHome(); focusHome(0); });
 
