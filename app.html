@@ -269,7 +269,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v7 · 08-27</div>
+  <div class="build-tag" id="build-tag">v9 · 08-27</div>
 
   <div class="location-box">
     <div class="label">현재 위치</div>
@@ -572,6 +572,156 @@
   //  ★ 이 높이보다 위는 도로를 안 그린다 (기울이기로 뭉개지는 띠).
   //    경로선·목적지 표시는 여기 걸리지 않는다 — 그건 끝까지 보여야 한다.
   const ROAD_TOP_CUT = 130;
+
+  //  ══════════════════════════════════════════
+  //   칼라 지도 (Mapbox 다크 타일)
+  //  ══════════════════════════════════════════
+  //  ★★ 왜 다크인가 — 색을 뺀 게 아니다
+  //    다크 스타일도 칼라 지도다. 도로는 노랑·주황, 물은 파랑, 공원은 초록.
+  //    **배경만 어둡다.**
+  //    안경은 더하기 화면이라 검정을 못 그린다. 주간 지도(배경 흰색)를 올리면
+  //    시야 20° 전체가 최대 밝기로 빛나는 흰 판이 된다 — 그 너머 실제 도로가
+  //    안 보인다. 운전 중이면 위험하다.
+  //    즉 밝은 배경은 '색' 문제가 아니라 **앞이 안 보이는** 문제다.
+  //
+  //  ★ 배경을 빼는 처리
+  //    dark-v11 배경은 순검정이 아니라 짙은 회색이다. 그대로 올리면
+  //    옅은 회색 판이 시야에 깔린다.
+  //    그래서 타일마다 **가장 흔한 색(=배경)을 찾아 빼고**, 남은 색을 키운다.
+  //    배경은 검정(=투명)이 되고 도로·글자만 색으로 남는다.
+  //    ※ 타일당 한 번만 하고 결과를 담아둔다. 매 프레임 도는 일이 아니다.
+  //
+  //  ★ 되돌릴 길
+  //    아래를 false 로 두면 예전 흰 벡터 선으로 즉시 돌아간다.
+  //    **잘 돌던 길을 지우지 않는다.** 새 길이 나쁘면 한 줄로 되돌린다.
+  const USE_RASTER = true;
+
+  //  기울이기(원근)를 이미지에 적용하려면 평평한 판에 먼저 그린 뒤
+  //  가로줄 단위로 옮겨 그려야 한다. 그 평평한 판.
+  //  ※ proj() 는 x 를 POS_X 기준으로 배율만 바꾸고 y 를 다시 매긴다 —
+  //    즉 **가로줄은 가로줄로 간다.** 그래서 줄 단위 복사로 정확히 맞는다.
+  //    (기울이기와 이미지를 따로 놀게 두면 경로선이 도로 위에 안 얹힌다.
+  //     그건 이 화면에서 가장 나쁜 고장이다.)
+  const FLAT_W = 1000, FLAT_H = 1100;     // 평평한 판 크기
+  const FLAT_OX = 200,  FLAT_OY = 480;    // 평평한 좌표 → 판 좌표 오프셋
+  const FLAT_HW = 340;                    // 옮겨 그릴 가로 반폭
+  const FLAT_FAR = 380;                   // 앞으로 얼마나 멀리까지 (평평한 픽셀)
+  let flatCv = null, flatCtx = null;
+
+  const rasterCache = {};     // key → 처리 끝난 캔버스
+  const rasterLoading = new Set();
+  const RASTER_MAX = 140;     // 이만큼 넘으면 오래된 것부터 버린다
+
+  //  ★ 타일에서 배경색을 찾아 뺀다.
+  //    '가장 흔한 색' 을 배경으로 본다 — 지도 타일은 대부분이 배경이다.
+  function stripBackground(img) {
+    const cv = document.createElement('canvas');
+    cv.width = TILE_SIZE; cv.height = TILE_SIZE;
+    const c = cv.getContext('2d', { willReadFrequently: true });
+    c.drawImage(img, 0, 0, TILE_SIZE, TILE_SIZE);
+    let d;
+    try { d = c.getImageData(0, 0, TILE_SIZE, TILE_SIZE); }
+    catch (e) { return cv; }        // 다른 출처라 못 읽으면 원본 그대로 쓴다
+    const px = d.data;
+
+    // 밝기 히스토그램으로 가장 흔한 어두운 값을 찾는다
+    const hist = new Uint32Array(64);
+    for (let i = 0; i < px.length; i += 4) {
+      const lum = (px[i] * 3 + px[i + 1] * 6 + px[i + 2]) >> 3;   // 0~255
+      hist[lum >> 2]++;
+    }
+    let mode = 0, best = 0;
+    for (let b = 0; b < 24; b++) { if (hist[b] > best) { best = hist[b]; mode = b; } }
+    const base = (mode << 2) + 2;
+
+    //  ★ 뺀 뒤에는 어두워지므로 다시 키운다. 안 키우면 '색은 맞는데 안 보이는'
+    //    상태가 된다 — 오늘 흰 선에서 겪은 것과 같은 실수다.
+    const gain = 2.3;
+    for (let i = 0; i < px.length; i += 4) {
+      for (let k = 0; k < 3; k++) {
+        const v = (px[i + k] - base) * gain;
+        px[i + k] = v < 0 ? 0 : (v > 255 ? 255 : v);
+      }
+    }
+    c.putImageData(d, 0, 0);
+    return cv;
+  }
+
+  function loadRasterTile(z, tx, ty) {
+    const key = `${z}/${tx}/${ty}`;
+    if (key in rasterCache || rasterLoading.has(key)) return;
+    rasterLoading.add(key);
+    const img = new Image();
+    img.crossOrigin = 'anonymous';     // 픽셀을 읽어야 배경을 뺄 수 있다
+    img.onload = () => {
+      rasterCache[key] = stripBackground(img);
+      rasterLoading.delete(key);
+      const keys = Object.keys(rasterCache);
+      if (keys.length > RASTER_MAX) delete rasterCache[keys[0]];
+    };
+    img.onerror = () => { rasterLoading.delete(key); };
+    img.src = `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/${z}/${tx}/${ty}`
+            + `?access_token=${MAPBOX_TOKEN}`;
+  }
+
+  //  ★ 평평한 판을 매 프레임 다시 만들면 무겁다 (타일 49장 × 60fps).
+  //    지도가 실제로 움직였을 때만 다시 만든다. 안 움직이면 있던 걸 쓴다.
+  //  ※ 발열로 밝기가 떨어지면 오늘 한 가시성 작업이 전부 헛것이 된다.
+  let flatKey = '';
+  function drawRasterMap(cx, cy) {
+    if (!flatCv) {
+      flatCv = document.createElement('canvas');
+      flatCv.width = FLAT_W; flatCv.height = FLAT_H;
+      flatCtx = flatCv.getContext('2d');
+    }
+    const z0 = tileZ();
+    const key = `${z0}|${cx.toFixed(5)}|${cy.toFixed(5)}|${viewRot.toFixed(3)}|${Object.keys(rasterCache).length}`;
+    if (key === flatKey) { blitFlat(); return; }
+    flatKey = key;
+
+    const f = flatCtx;
+    f.setTransform(1, 0, 0, 1, 0, 0);
+    f.clearRect(0, 0, FLAT_W, FLAT_H);
+
+    // ① 평평하게, 다만 진행 방향으로 돌려서 그린다
+    f.save();
+    f.translate(POS_X + FLAT_OX, POS_Y + FLAT_OY);
+    f.rotate(viewRot);
+    f.translate(-(POS_X + FLAT_OX), -(POS_Y + FLAT_OY));
+    const z = tileZ();
+    const need = 3;
+    for (let tx = Math.floor(cx) - need; tx <= Math.floor(cx) + need; tx++) {
+      for (let ty = Math.floor(cy) - need; ty <= Math.floor(cy) + need; ty++) {
+        const key = `${z}/${tx}/${ty}`;
+        const cv = rasterCache[key];
+        if (!cv) { loadRasterTile(z, tx, ty); continue; }
+        const fx = (tx - cx) * TILE_SIZE + POS_X + FLAT_OX;
+        const fy = (ty - cy) * TILE_SIZE + POS_Y + FLAT_OY;
+        f.drawImage(cv, fx, fy, TILE_SIZE, TILE_SIZE);
+      }
+    }
+    f.restore();
+    blitFlat();
+  }
+
+  // ② 가로줄 단위로 원근을 먹여 옮겨 그린다
+  function blitFlat() {
+    const STEP = 6;
+    for (let y = POS_Y; y > POS_Y - FLAT_FAR; y -= STEP) {
+      const pNear = proj(POS_X, y);
+      const pFar  = proj(POS_X, y - STEP);
+      if (!pNear.ok || !pFar.ok) break;
+      const dh = pNear.y - pFar.y;
+      if (dh <= 0.05) break;                       // 지평선에 붙어 뭉개지면 멈춘다
+      const denom = 1 + (POS_Y - y) * PITCH_K * mapView.pitch;
+      const dw = (FLAT_HW * 2) / denom;
+      ctx.drawImage(
+        flatCv,
+        POS_X - FLAT_HW + FLAT_OX, (y - STEP) + FLAT_OY, FLAT_HW * 2, STEP,
+        POS_X - dw / 2, pFar.y, dw, dh + 0.6                 // 줄 사이가 벌어지지 않게 살짝 겹친다
+      );
+    }
+  }
   //  ★ 골목·보행로를 그리는 반경(화면 픽셀). 줌 18에서 1px ≈ 0.47m 이므로
   //    220px ≈ 약 100m — 걸을 때 실제로 쓰는 범위다.
   const NEAR_R  = 220;
@@ -1613,7 +1763,21 @@
   // ── 렌더 루프 ──
   function startRenderLoop() {
     if (animFrame) cancelAnimationFrame(animFrame);
+    //  ★ 60fps 로 다시 그릴 이유가 없다.
+    //    위치는 1~5초에 한 번 오고, 사람이 보는 화면이지 게임이 아니다.
+    //    ※ 안경은 발열에 민감하다. 뜨거워지면 화면 밝기부터 떨어지고,
+    //      그러면 오늘 한 가시성 작업이 통째로 무의미해진다.
+    let lastDrawAt = 0;
+    const DRAW_MS = 50;                 // 초당 20번
     function loop() {
+      animFrame = requestAnimationFrame(loop);
+      const now = performance.now();
+      //  카메라가 움직이는 중(줌·기울이기 전환)에는 부드럽게 보여야 하므로 다 그린다
+      const moving = Math.abs(mapView.zoom - zoomTarget) > 0.002
+                  || Math.abs(mapView.pitch - pitchTarget) > 0.001;
+      if (!moving && now - lastDrawAt < DRAW_MS) return;
+      lastDrawAt = now;
+
       pulsePhase = (pulsePhase + 0.025) % 1;
       updateViewRot();
       // 카메라 각도 부드럽게 전환 (탑뷰 → 쿼터뷰)
@@ -1629,7 +1793,6 @@
         mapView.pitch = pitchTarget;
       }
       renderMap();
-      animFrame = requestAnimationFrame(loop);
     }
     loop();
   }
@@ -1666,11 +1829,21 @@
       }
     }
 
-    // 벡터 도로선 (Mapbox Streets MVT → 흰 선, 검정=투명)
-    drawRoads(cx, cy);
+    // 배경 지도 — 칼라 타일이 우선, 안 되면 예전 벡터 흰 선
+    if (USE_RASTER) drawRasterMap(cx, cy);
+    else drawRoads(cx, cy);
 
     // 경로선 (Meta 스타일 - 얇고 선명한 파란선)
-    if (routeCoords.length > 1) {
+    //  ══════════════════════════════════════════
+    //   ★ 지나온 길은 지운다
+    //  ══════════════════════════════════════════
+    //   전에는 출발점부터 도착점까지 통째로 그렸다. 그래서 이미 지나온 구간이
+    //   내 뒤에 그대로 남아 있었다.
+    //   ※ 좁은 화면(20°)에서 **이미 끝난 정보는 방해**다. 앞으로 갈 길과
+    //     뒤에 남은 선이 같은 굵기·같은 색이면 어느 쪽이 앞인지 헷갈린다.
+    //   ※ alongNow(경로 위 내 자리)는 이미 재고 있었다. 그 뒤쪽만 안 그리면 된다.
+    const drawCoords = remainingRouteCoords();
+    if (drawCoords.length > 1) {
       // ★ 경로선은 화면에서 가장 중요한 선이다. 도로보다 확실히 위에 보여야 한다.
       //   외곽 번짐 (넓게, 그러나 도로와 섞이지 않게 색을 확실히)
       ctx.beginPath();
@@ -1679,7 +1852,7 @@
       ctx.strokeStyle = 'rgba(60,255,140,0.60)';
       ctx.lineWidth = 22; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
       let started = false;
-      routeCoords.forEach(pt => {
+      drawCoords.forEach(pt => {
         const p = latLngToPixel(pt.lat, pt.lng);
         if (!p.ok) { started = false; return; }
         started ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
@@ -1698,7 +1871,7 @@
       //    경계를 흐린다.** 밝아 보이지만 덜 또렷해진다.
       //    강조는 번짐이 아니라 굵기로 한다 (11 → 13px).
       started = false;
-      routeCoords.forEach(pt => {
+      drawCoords.forEach(pt => {
         const p = latLngToPixel(pt.lat, pt.lng);
         if (!p.ok) { started = false; return; }
         started ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
@@ -1824,6 +1997,24 @@
   function drawCurrentPos(x, y) {
     // ★ 방향 부채꼴 — 내가 어느 쪽을 보고 있는지.
     //   이게 없으면 점만 찍혀서 어느 쪽으로 첫걸음을 떼야 할지 알 수 없다.
+    //  ══════════════════════════════════════════
+    //   ★ 드라이브 모드에서는 **항상 화면 위**를 가리킨다
+    //  ══════════════════════════════════════════
+    //   지도는 이미 가는 방향으로 돌아가 있다. 그러면 '내가 가는 쪽' = 화면 위다.
+    //   그런데 부채꼴은 나침반(=머리 방향)을 따라가고 있었다.
+    //   차에서 옆을 흘깃 보면 화살표만 옆으로 돌아간다 — 지도와 따로 논다.
+    //   차량 내비는 전부 이렇게 하지 않는다. 차는 앞으로 가고, 화살표도 위다.
+    //
+    //   ※ 걷기는 다르다. 걸을 때는 서서 두리번거리며 '어느 쪽으로 첫걸음을
+    //     뗄까' 를 정한다. 그때는 머리 방향이 진짜 정보다. 그래서 남겨둔다.
+    //     같은 부품이지만 두 모드에서 쓰임이 다르다 — 지도(무엇을 그리나)는
+    //     같아야 하지만, 이건 '내가 어디를 보는가' 라 성격이 다르다.
+    if (navProfile === 'driving') {
+      drawFacingFan(x, y, -Math.PI / 2);   // 화면 위쪽 고정
+      drawPosDot(x, y);
+      return;
+    }
+
     const deg = facingDeg();
     if (deg == null) {
       // ★ 방향을 못 얻었으면 그렇다고 보여준다.
@@ -1840,6 +2031,14 @@
       // ★ 지도가 진행 방향으로 돌아갔으므로, 부채꼴도 같은 만큼 돌려야
       //   화면에서 위를 가리킨다. (안 돌리면 지도와 부채꼴이 따로 논다)
       const rad = (deg - 90) * Math.PI / 180 + viewRot;
+      drawFacingFan(x, y, rad);
+    }
+    drawPosDot(x, y);
+  }
+
+  /// 방향 부채꼴 하나만 그린다 (각도는 화면 기준 라디안)
+  function drawFacingFan(x, y, rad) {
+    {
       const spread = 0.42;                       // 부채꼴 폭 (약 48도)
       const R = 46;
       const g = ctx.createRadialGradient(x, y, 8, x, y, R);
@@ -1867,6 +2066,10 @@
       ctx.restore();
     }
 
+  }
+
+  /// 현재 위치 점 (펄스 + 흰 링 + 안쪽 원)
+  function drawPosDot(x, y) {
     // 외부 펄스 링
     const pulseR = 14 + pulsePhase * 22;
     const pulseAlpha = (1 - pulsePhase) * 0.3;
@@ -1995,6 +2198,21 @@
   //    모양이 곧 뜻이므로 여기서 아끼면 안 된다.
   let linkTarget = null;    // {lat,lng} — 경로 위 붙어야 할 지점
   let linkDistM  = 0;       // 거기까지 직선 거리
+
+  /// 아직 안 지난 구간만 돌려준다. 지나온 뒤쪽은 버린다.
+  /// ※ 안내를 시작하기 전(alongNow=0)에는 경로 전체가 그대로 나온다.
+  function remainingRouteCoords() {
+    if (routeCoords.length < 2) return routeCoords;
+    if (!routeCum.length || alongNow <= 0) return routeCoords;
+    //  내가 있는 지점을 첫 점으로 삼는다 — 안 그러면 선이 저만치서 시작해
+    //  '경로가 끊겼나' 로 보인다.
+    const head = pointAlongRoute(alongNow);
+    const out = head ? [head] : [];
+    for (let i = 0; i < routeCoords.length; i++) {
+      if (routeCum[i] > alongNow) out.push(routeCoords[i]);
+    }
+    return out.length > 1 ? out : routeCoords;
+  }
 
   /// 경로를 따라 mAlong 미터 지점의 좌표. 없으면 null.
   function pointAlongRoute(mAlong) {
