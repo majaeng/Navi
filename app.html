@@ -278,7 +278,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v12 · 08-27</div>
+  <div class="build-tag" id="build-tag">v14 · 08-27</div>
 
   <div class="location-box">
     <div class="label">현재 위치</div>
@@ -611,15 +611,25 @@
   //    즉 **가로줄은 가로줄로 간다.** 그래서 줄 단위 복사로 정확히 맞는다.
   //    (기울이기와 이미지를 따로 놀게 두면 경로선이 도로 위에 안 얹힌다.
   //     그건 이 화면에서 가장 나쁜 고장이다.)
-  const FLAT_W = 1000, FLAT_H = 1100;     // 평평한 판 크기
-  const FLAT_OX = 200,  FLAT_OY = 480;    // 평평한 좌표 → 판 좌표 오프셋
+  //  ★ 앞뒤로 얼마나 담을지 계산해서 정한다. 눈대중으로 잡았다가
+  //    화면 아래가 통째로 비었다 (아래 FLAT_NEAR 주석 참고).
+  //    기울기를 최대로 줬을 때도 화면 600px 이 다 덮이는지 따져서 잡은 값이다.
+  const FLAT_W = 1000, FLAT_H = 1180;     // 평평한 판 크기
+  const FLAT_OX = 200,  FLAT_OY = 520;    // 평평한 좌표 → 판 좌표 오프셋
   const FLAT_HW = 340;                    // 옮겨 그릴 가로 반폭
-  const FLAT_FAR = 380;                   // 앞으로 얼마나 멀리까지 (평평한 픽셀)
+  const FLAT_FAR = 900;                   // 앞으로 얼마나 멀리까지 (평평한 픽셀)
+  //  ★★ 이걸 빠뜨려서 **내 위치 아래(=뒤편) 화면이 통째로 안 그려졌다.**
+  //    가로줄 반복문을 POS_Y 에서 시작해 앞으로만 돌렸다.
+  //    현재 위치는 화면 아래 1/3(y=420)에 있으므로 그 아래 180px 이
+  //    영영 비어 있었다 — "어떤 줌에서든 아랫부분이 잘린다" 가 이것이다.
+  //  ※ 기준점에서 한쪽으로만 도는 반복문은 반대쪽을 잊기 쉽다.
+  //    화면을 채우는 코드는 **화면 끝에서 끝까지** 도는지부터 본다.
+  const FLAT_NEAR = 180;                  // 뒤로 얼마나 (POS_Y 아래)
   let flatCv = null, flatCtx = null;
 
   const rasterCache = {};     // key → 처리 끝난 캔버스
   const rasterLoading = new Set();
-  const RASTER_MAX = 48;      // 이만큼 넘으면 오래된 것부터 버린다
+  const RASTER_MAX = 40;      // 이만큼 넘으면 오래된 것부터 버린다
   //  ★★ 전에는 '담긴 타일 개수' 로 다시 그릴지 판단했다.
   //    그런데 하나를 버리면서 하나가 들어오면 **개수가 그대로**다 —
   //    새 타일이 왔는데도 갱신을 건너뛴다. 줌을 바꿨을 때 지도가 안 바뀌던
@@ -808,13 +818,20 @@
 
   // ② 가로줄 단위로 원근을 먹여 옮겨 그린다
   function blitFlat() {
-    const STEP = 6;
-    for (let y = POS_Y; y > POS_Y - FLAT_FAR; y -= STEP) {
+    //  ★ 줄 간격을 거리에 따라 벌린다.
+    //    먼 곳은 원근으로 잘게 눌리므로 촘촘히 뜰 이유가 없다.
+    //    같은 화면을 절반의 그리기로 채운다 — 발열이 곧 밝기다.
+    for (let y = POS_Y + FLAT_NEAR; y > POS_Y - FLAT_FAR; ) {
+      const dist = POS_Y - y;
+      const STEP = dist < 200 ? 6 : (dist < 500 ? 12 : 24);
       const pNear = proj(POS_X, y);
       const pFar  = proj(POS_X, y - STEP);
-      if (!pNear.ok || !pFar.ok) break;
+      //  ※ 뒤편(y > POS_Y)에서는 지평선이 없다. 앞쪽으로 넘어간 뒤에만 멈춘다.
+      //  ※ 이 반복문은 아래에서 y 를 줄인다. 그냥 continue 하면 y 가 그대로라
+      //    무한루프가 된다. 건너뛸 때도 반드시 줄이고 넘어간다.
+      if (!pNear.ok || !pFar.ok) { if (y <= POS_Y) break; y -= STEP; continue; }
       const dh = pNear.y - pFar.y;
-      if (dh <= 0.05) break;                       // 지평선에 붙어 뭉개지면 멈춘다
+      if (dh <= 0.05)            { if (y <= POS_Y) break; y -= STEP; continue; }
       const denom = 1 + (POS_Y - y) * PITCH_K * mapView.pitch;
       const dw = (FLAT_HW * 2) / denom;
       ctx.drawImage(
@@ -822,6 +839,7 @@
         POS_X - FLAT_HW + FLAT_OX, (y - STEP) + FLAT_OY, FLAT_HW * 2, STEP,
         POS_X - dw / 2, pFar.y, dw, dh + 0.6                 // 줄 사이가 벌어지지 않게 살짝 겹친다
       );
+      y -= STEP;
     }
   }
   //  ★ 골목·보행로를 그리는 반경(화면 픽셀). 줌 18에서 1px ≈ 0.47m 이므로
