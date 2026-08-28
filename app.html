@@ -297,7 +297,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v22 · 08-27</div>
+  <div class="build-tag" id="build-tag">v23 · 08-27</div>
 
   <div class="location-box">
     <div class="label">현재 위치</div>
@@ -882,6 +882,117 @@
       }
     }
     return drew;
+  }
+
+  //  ══════════════════════════════════════════
+  //   도로의 진짜 폭 — 경로 주변 도로의 가장자리를 그린다
+  //  ══════════════════════════════════════════
+  //  ★★ "길이 없는 곳에 경로가 그려진다" 의 진짜 답이 여기 있었다.
+  //
+  //    실측 (오토웨이타워→클라이피 715m, 5m 간격 144지점, 선분까지):
+  //        중앙값 10.4m · 90% 16.1m · 최대 17.1m
+  //        가장 가까운 도로: secondary 100 · primary 19
+  //
+  //    이 값들이 **도로 반폭 안에 정확히 들어간다.**
+  //        영동대로(primary)  폭 40m → 반 20m   vs 재본 값 16~17m
+  //        역삼로(secondary)  폭 25m → 반 12.5m vs 재본 값 10~11m
+  //
+  //    즉 경로는 어긋난 게 아니라 **도로 위(가장자리=인도)** 에 있었다.
+  //    지도가 왕복 8차선을 **가느다란 선 하나**로 그려서 밖으로 보였을 뿐이다.
+  //
+  //  ★ 그래서 도로의 **양쪽 가장자리**를 그린다. 그러면 초록 경로가
+  //    그 안쪽에 놓이고, "도로 옆" 이 아니라 "도로 위" 로 읽힌다.
+  //  ※ 폭만큼 칠하지 않는다. 더하기 화면에서 80px 밝은 띠는 시야를 다 먹는다.
+  //    가느다란 선 두 줄이면 경계를 알리는 데 충분하다.
+  //  ※ 칼라 타일은 그대로 둔다. 지도 전체를 벡터로 바꿀 이유가 없다 —
+  //    필요한 건 **경로가 지나는 도로**뿐이고, 그건 벡터 타일 서너 장이면 된다
+  //    (실측 3장 · 95KB · 268ms, 경로당 한 번).
+  //
+  //  ※ 폭은 등급별 어림값이다. 실제 폭 데이터는 어디에도 없다.
+  //    다만 '도로에는 폭이 있다' 는 사실을 그리는 것이지 규칙을 지어내는 게 아니다.
+  const ROAD_HALF_M = {           // 중심선에서 가장자리까지 (m)
+    motorway: 25, trunk: 22, primary: 20, secondary: 12,
+    tertiary: 8, street: 6, street_limited: 6,
+  };
+  let roadEdges = [];             // [{a:{lat,lng}, b:{lat,lng}}] — 이미 밀어낸 선분
+  let edgesFor = '';
+
+  async function buildRoadEdges() {
+    if (!routeCoords.length) { roadEdges = []; return; }
+    const sig = routeCoords.length + '/' + routeCoords[0].lat.toFixed(5);
+    if (sig === edgesFor) return;
+    edgesFor = sig;
+
+    const z = 16, EXTENT = 4096;
+    const keys = new Set();
+    for (const p of routeCoords) {
+      const t = latLngToTilePixel(p.lat, p.lng, z);
+      keys.add(`${Math.floor(t.tx)}/${Math.floor(t.ty)}`);
+      if (keys.size > 8) break;                 // 욕심내지 않는다
+    }
+    await Promise.all([...keys].map(k => {
+      const [x, y] = k.split('/').map(Number);
+      return loadVectorTile(z, x, y);
+    }));
+
+    const K = 111320;
+    const cosLat = Math.cos(routeCoords[0].lat * Math.PI / 180);
+    const toM = (p, o) => ({ x: (p.lng - o.lng) * K * cosLat, y: (p.lat - o.lat) * K });
+    const org = routeCoords[0];
+    const routeM = routeCoords.map(p => toM(p, org));
+
+    //  경로 선분까지의 거리 (m)
+    function distToRoute(px, py) {
+      let best = Infinity;
+      for (let i = 0; i < routeM.length - 1; i++) {
+        const a = routeM[i], b = routeM[i + 1];
+        const bx = b.x - a.x, by = b.y - a.y, L2 = bx * bx + by * by;
+        let t = L2 > 0 ? ((px - a.x) * bx + (py - a.y) * by) / L2 : 0;
+        t = t < 0 ? 0 : (t > 1 ? 1 : t);
+        const d = Math.hypot(px - (a.x + bx * t), py - (a.y + by * t));
+        if (d < best) best = d;
+      }
+      return best;
+    }
+
+    const out = [];
+    for (const key in vtCache) {
+      const [kz, ktx, kty] = key.split('/').map(Number);
+      if (kz !== z) continue;
+      for (const f of vtCache[key]) {
+        const half = ROAD_HALF_M[f.props.class];
+        if (!half) continue;                    // 폭이 뜻있는 도로만
+        for (const ring of f.geom) {
+          for (let i = 0; i < ring.length - 1; i++) {
+            const A = tilePxToLatLng(ktx + ring[i].x / EXTENT, kty + ring[i].y / EXTENT, z);
+            const B = tilePxToLatLng(ktx + ring[i + 1].x / EXTENT, kty + ring[i + 1].y / EXTENT, z);
+            const am = toM(A, org), bm = toM(B, org);
+            //  경로에서 먼 도로는 그리지 않는다 — 화면이 시끄러워질 뿐이다
+            const mx = (am.x + bm.x) / 2, my = (am.y + bm.y) / 2;
+            if (distToRoute(mx, my) > half + 25) continue;
+            const dx = bm.x - am.x, dy = bm.y - am.y;
+            const L = Math.hypot(dx, dy);
+            if (L < 1) continue;
+            const nx = -dy / L * half, ny = dx / L * half;   // 수직 방향으로 반폭만큼
+            for (const sgn of [1, -1]) {
+              out.push({
+                a: { lat: A.lat + sgn * ny / K, lng: A.lng + sgn * nx / (K * cosLat) },
+                b: { lat: B.lat + sgn * ny / K, lng: B.lng + sgn * nx / (K * cosLat) },
+              });
+            }
+          }
+        }
+      }
+    }
+    roadEdges = out;
+  }
+
+  /// 타일 좌표(소수 포함) → 위경도
+  function tilePxToLatLng(tx, ty, z) {
+    const n = 2 ** z;
+    const lng = tx / n * 360 - 180;
+    const m = Math.PI - 2 * Math.PI * ty / n;
+    return { lat: 180 / Math.PI * Math.atan(0.5 * (Math.exp(m) - Math.exp(-m))), lng };
   }
 
   //  ══════════════════════════════════════════
@@ -1665,6 +1776,7 @@
         // ★ 진행률을 재려면 경로를 한 번 훑어 누적거리를 만들어 둬야 한다
         buildRouteIndex(route.duration);
         prefetchRouteTiles();          // 앞으로 갈 길의 타일을 미리 받아둔다
+        buildRoadEdges();              // 경로가 지나는 도로의 가장자리
         const distKm = (route.distance / 1000).toFixed(1);
         const etaMin = Math.round(route.duration / 60);
         document.getElementById('nav-eta').textContent = etaMin;
@@ -2162,6 +2274,24 @@
         started = true;
       });
       ctx.stroke();
+    }
+
+    //  ── 도로 가장자리 (경로 주변 도로의 실제 폭) ──
+    //  ※ 경로선보다 **먼저** 그린다. 경로가 위에 얹혀야 어느 게 갈 길인지 읽힌다.
+    if (roadEdges.length) {
+      ctx.save();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (const e of roadEdges) {
+        const p = latLngToPixel(e.a.lat, e.a.lng);
+        const q = latLngToPixel(e.b.lat, e.b.lng);
+        if (p.ok === false || q.ok === false) continue;
+        if (p.x < -200 && q.x < -200) continue;
+        ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y);
+      }
+      ctx.stroke();
+      ctx.restore();
     }
 
     //  ── 접근 구간 점선 ──
@@ -2715,6 +2845,7 @@
     isRerouting = false; spokenDistBucket = null; spokenBucketVal = null;
     routeCum = []; stepAlong = []; alongNow = 0; projHint = 0;
     routeTotalM = 0; routeDurationS = 0; offStreak = 0;
+    roadEdges = []; edgesFor = '';
     navFlags = { gpsLost: false, routeLoading: false, routeFailed: false, offline: false };
     linkTarget = null; linkDistM = 0;
     renderNavStatus();
