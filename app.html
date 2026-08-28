@@ -278,7 +278,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v11 · 08-27</div>
+  <div class="build-tag" id="build-tag">v12 · 08-27</div>
 
   <div class="location-box">
     <div class="label">현재 위치</div>
@@ -619,17 +619,26 @@
 
   const rasterCache = {};     // key → 처리 끝난 캔버스
   const rasterLoading = new Set();
-  const RASTER_MAX = 140;     // 이만큼 넘으면 오래된 것부터 버린다
+  const RASTER_MAX = 48;      // 이만큼 넘으면 오래된 것부터 버린다
+  //  ★★ 전에는 '담긴 타일 개수' 로 다시 그릴지 판단했다.
+  //    그런데 하나를 버리면서 하나가 들어오면 **개수가 그대로**다 —
+  //    새 타일이 왔는데도 갱신을 건너뛴다. 줌을 바꿨을 때 지도가 안 바뀌던
+  //    이유 중 하나가 이것이다.
+  //  ★ 개수가 아니라 **바뀐 횟수**를 센다. 같은 수로 돌아올 일이 없다.
+  let rasterVersion = 0;
 
   //  ★ 타일에서 배경색을 찾아 뺀다.
   //    '가장 흔한 색' 을 배경으로 본다 — 지도 타일은 대부분이 배경이다.
+  //  ※ 512 로 그릴 것이므로 512 로 받아 512 로 처리한다.
+  //    256 을 두 배로 늘려 그리면 그만큼 뭉개진다 — 굳이 흐리게 만들 이유가 없다.
+  const RPX = 512;
   function stripBackground(img) {
     const cv = document.createElement('canvas');
-    cv.width = TILE_SIZE; cv.height = TILE_SIZE;
+    cv.width = RPX; cv.height = RPX;
     const c = cv.getContext('2d', { willReadFrequently: true });
-    c.drawImage(img, 0, 0, TILE_SIZE, TILE_SIZE);
+    c.drawImage(img, 0, 0, RPX, RPX);
     let d;
-    try { d = c.getImageData(0, 0, TILE_SIZE, TILE_SIZE); }
+    try { d = c.getImageData(0, 0, RPX, RPX); }
     catch (e) { return cv; }        // 다른 출처라 못 읽으면 원본 그대로 쓴다
     const px = d.data;
 
@@ -700,6 +709,7 @@
     img.onload = () => {
       rasterCache[key] = stripBackground(img);
       rasterLoading.delete(key);
+      rasterVersion++;
       const keys = Object.keys(rasterCache);
       if (keys.length > RASTER_MAX) delete rasterCache[keys[0]];
     };
@@ -712,7 +722,7 @@
     //  ★ navigation-night-v1 은 내비게이션용이다. 배경이 거의 검정이고
     //    도로가 밝다. 이 화면에 맞는 건 이것뿐이다.
     //  ※ 눈으로 짐작하지 말고 픽셀을 세어볼 것. 68배 차이였다.
-    img.src = `https://api.mapbox.com/styles/v1/mapbox/navigation-night-v1/tiles/256/${z}/${tx}/${ty}`
+    img.src = `https://api.mapbox.com/styles/v1/mapbox/navigation-night-v1/tiles/256/${z}/${tx}/${ty}@2x`
             + `?access_token=${MAPBOX_TOKEN}`;
   }
 
@@ -720,6 +730,48 @@
   //    지도가 실제로 움직였을 때만 다시 만든다. 안 움직이면 있던 걸 쓴다.
   //  ※ 발열로 밝기가 떨어지면 오늘 한 가시성 작업이 전부 헛것이 된다.
   let flatKey = '';
+  //  ══════════════════════════════════════════
+  //   ★ 아직 안 온 타일은 이웃 줌으로 메운다
+  //  ══════════════════════════════════════════
+  //   줌을 바꾸면 그 줌의 타일을 새로 받아야 한다. 받는 동안 그 자리를
+  //   비워두면 **지도가 중간에 잘려** 보인다.
+  //   ※ 비어 있는 것보다 '조금 거친 지도' 가 낫다. 잘린 지도는 고장으로 보인다.
+  //
+  //   위쪽 줌(부모)이 있으면 그 일부를 늘려 쓰고,
+  //   아래쪽 줌(자식)이 있으면 네 조각을 줄여 쓴다.
+  //   둘 다 이미 담아둔 것이라 새로 받을 필요가 없다 — 그래서 즉시 그려진다.
+  function drawTileOrNear(f, z, tx, ty, dx, dy) {
+    const exact = rasterCache[`${z}/${tx}/${ty}`];
+    if (exact) { f.drawImage(exact, dx, dy, RTILE, RTILE); return; }
+    loadRasterTile(z, tx, ty);
+
+    // 부모(더 넓게 찍힌 타일)의 해당 부분을 늘려 쓴다
+    for (let L = 1; L <= 3; L++) {
+      const pz = z - L, ptx = tx >> L, pty = ty >> L;
+      const par = rasterCache[`${pz}/${ptx}/${pty}`];
+      if (!par) continue;
+      const n = 1 << L;                          // 부모 한 장이 담은 자식 수(한 변)
+      const sw = RPX / n;
+      const sx = (tx - (ptx << L)) * sw;
+      const sy = (ty - (pty << L)) * sw;
+      f.drawImage(par, sx, sy, sw, sw, dx, dy, RTILE, RTILE);
+      return;
+    }
+
+    // 자식(더 좁게 찍힌 타일) 네 조각을 줄여 쓴다
+    const half = RTILE / 2;
+    let drew = false;
+    for (let i = 0; i < 2; i++) {
+      for (let j = 0; j < 2; j++) {
+        const ch = rasterCache[`${z + 1}/${tx * 2 + i}/${ty * 2 + j}`];
+        if (!ch) continue;
+        f.drawImage(ch, dx + i * half, dy + j * half, half, half);
+        drew = true;
+      }
+    }
+    return drew;
+  }
+
   function drawRasterMap(cx, cy) {
     if (!flatCv) {
       flatCv = document.createElement('canvas');
@@ -727,7 +779,7 @@
       flatCtx = flatCv.getContext('2d');
     }
     const z0 = tileZ();
-    const key = `${z0}|${cx.toFixed(6)}|${cy.toFixed(6)}|${viewRot.toFixed(3)}|${Object.keys(rasterCache).length}`;
+    const key = `${z0}|${cx.toFixed(6)}|${cy.toFixed(6)}|${viewRot.toFixed(3)}|${rasterVersion}`;
     if (key === flatKey) { blitFlat(); return; }
     flatKey = key;
 
@@ -745,12 +797,9 @@
     const need = 2;
     for (let tx = Math.floor(rcx) - need; tx <= Math.floor(rcx) + need; tx++) {
       for (let ty = Math.floor(rcy) - need; ty <= Math.floor(rcy) + need; ty++) {
-        const key = `${z}/${tx}/${ty}`;
-        const cv = rasterCache[key];
-        if (!cv) { loadRasterTile(z, tx, ty); continue; }
         const fx = (tx - rcx) * RTILE + POS_X + FLAT_OX;
         const fy = (ty - rcy) * RTILE + POS_Y + FLAT_OY;
-        f.drawImage(cv, fx, fy, RTILE, RTILE);
+        drawTileOrNear(f, z, tx, ty, fx, fy);
       }
     }
     f.restore();
