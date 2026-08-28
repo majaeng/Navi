@@ -297,7 +297,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v21 · 08-27</div>
+  <div class="build-tag" id="build-tag">v22 · 08-27</div>
 
   <div class="location-box">
     <div class="label">현재 위치</div>
@@ -648,7 +648,7 @@
 
   const rasterCache = {};     // key → 처리 끝난 캔버스
   const rasterLoading = new Set();
-  const RASTER_MAX = 48;   // 화면에 쓰는 25장 + 여유      // 이만큼 넘으면 오래된 것부터 버린다
+  const RASTER_MAX = 14;   // 화면에 쓰는 9장 + 여유 (한 장이 4배 커졌다)      // 이만큼 넘으면 오래된 것부터 버린다
   //  ★★ 전에는 '담긴 타일 개수' 로 다시 그릴지 판단했다.
   //    그런데 하나를 버리면서 하나가 들어오면 **개수가 그대로**다 —
   //    새 타일이 왔는데도 갱신을 건너뛴다. 줌을 바꿨을 때 지도가 안 바뀌던
@@ -663,7 +663,6 @@
   //    '가장 흔한 색' 을 배경으로 본다 — 지도 타일은 대부분이 배경이다.
   //  ※ 512 로 그릴 것이므로 512 로 받아 512 로 처리한다.
   //    256 을 두 배로 늘려 그리면 그만큼 뭉개진다 — 굳이 흐리게 만들 이유가 없다.
-  const RPX = 512;
   function stripBackground(img) {
     const cv = document.createElement('canvas');
     cv.width = RPX; cv.height = RPX;
@@ -735,8 +734,28 @@
   //    대신 글자와 선이 **두 배로 굵고 커진다.** 담기는 정보도 한 단계
   //    걸러져서(작은 길·잔글씨가 빠짐) 화면이 오히려 정돈된다.
   //  ※ 화질은 조금 무뎌진다. 이 화면에서는 선명함보다 **읽히는 것**이 먼저다.
-  const RZ_DROP = 1;                       // 몇 단계 낮춰 받을지
-  const RTILE = TILE_SIZE << RZ_DROP;      // 그릴 때의 크기 (512)
+  //  ══════════════════════════════════════════
+  //   ★★ 한 장이 더 넓은 땅을 담게 한다 — 요청 수를 줄이려고
+  //  ══════════════════════════════════════════
+  //   실측: 25장을 한꺼번에 받으면 **전부 도착까지 4.5초** (중앙값 2.4초).
+  //   WebP 로 크기를 6분의 1로 줄여봤지만 **차이가 없었다** (4508 vs 3898ms).
+  //   → 병목은 바이트가 아니라 **요청 하나하나의 왕복·서버 렌더 시간**이다.
+  //     그러면 줄일 것은 크기가 아니라 **개수**다.
+  //
+  //   Mapbox 는 512 크기 타일도 준다. `tiles/512/{z}/…@2x` 는 1024×1024 로 오고,
+  //   z 를 두 단계 낮추면 **픽셀 밀도가 지금과 똑같다** (0.475 m/px).
+  //     지금  : 256타일 z17 @2x → 512px 가 243m   (25장 필요)
+  //     바꿈  : 512타일 z16 @2x → 1024px 가 486m  ( 9장 필요)
+  //   한 장이 네 장을 대신한다.
+  //
+  //   ※ 픽셀 처리량은 조금 늘어난다(6.5M → 9.4M). 그래도 그건 0.5초 안쪽이고
+  //     네트워크는 4.5초였다. 큰 쪽을 줄인다.
+  const RZ_DROP = 2;                       // 몇 단계 낮춰 받을지
+  const RTILE = TILE_SIZE << RZ_DROP;      // 그릴 때의 크기 (1024)
+  //  ★ 받은 그림 크기 = 그릴 크기. 늘려 그리지 않으니 뭉개지지 않는다.
+  //  ※ 이 줄은 RTILE **뒤에** 있어야 한다. 앞에 두면 실행하는 순간 죽는다
+  //    (const 는 선언 전에 못 쓴다). 문법 검사로는 안 잡히는 종류다.
+  const RPX = RTILE;
 
   function loadRasterTile(z, tx, ty) {
     const key = `${z}/${tx}/${ty}`;
@@ -807,10 +826,10 @@
     img.onerror = () => {
       if (img.dataset.retried) { rasterLoading.delete(key); return; }
       img.dataset.retried = '1';
-      img.src = `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/${z}/${tx}/${ty}@2x`
+      img.src = `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/512/${z}/${tx}/${ty}@2x`
               + `?access_token=${MAPBOX_TOKEN}`;
     };
-    img.src = `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/${z}/${tx}/${ty}@2x.webp`
+    img.src = `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/512/${z}/${tx}/${ty}@2x.webp`
             + `?access_token=${MAPBOX_TOKEN}`;
   }
 
@@ -923,7 +942,7 @@
     f.translate(-(POS_X + FLAT_OX), -(POS_Y + FLAT_OY));
     const z = tileZ() - RZ_DROP;
     const rcx = cx / (1 << RZ_DROP), rcy = cy / (1 << RZ_DROP);   // 낮춘 줌에서의 중심 타일
-    const need = 2;
+    const need = 1;          // 3x3 = 9장이면 판(1000x1180)을 덮는다
     //  ★★ 타일을 받는 **순서**가 중요하다.
     //    전에는 격자 순서(왼쪽 위부터)로 요청했다. 그러면 화면 구석 타일이
     //    내 발밑 타일보다 먼저 도착한다. 브라우저는 한 번에 6개쯤만 받으므로
