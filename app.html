@@ -154,6 +154,25 @@
       border-radius: 50px; padding: 12px 22px 12px 12px;
       display: flex; align-items: center; gap: 12px; z-index: 10;
       white-space: nowrap;
+      /* ★ 글이 길면 띠가 화면 밖으로 자라나면서 **왼쪽 아이콘까지 잘렸다.**
+         가운데 정렬이라 넘치면 양쪽으로 삐져나간다.
+         화면(600) 안에 가두고, 넘치는 글은 안에서 흐르게 한다. */
+      max-width: 560px;
+      box-sizing: border-box;
+    }
+    .turn-info { min-width: 0; overflow: hidden; }   /* flex 안에서 줄어들 수 있게 */
+
+    /*  ★ 넘치는 글은 우 → 좌로 흐른다.
+        ※ 줄바꿈하지 않는다. 띠가 두 줄이 되면 그만큼 시야를 더 가린다.
+        ※ 안 넘치면 흐르지 않는다 — 가만히 있는 글이 읽기 쉽다.
+           움직이는 것은 시선을 뺏으므로 필요할 때만 움직인다. */
+    .marquee { display: inline-block; white-space: nowrap; }
+    .marquee.run { animation: flow linear infinite; }
+    @keyframes flow {
+      0%   { transform: translateX(0); }
+      8%   { transform: translateX(0); }            /* 잠깐 멈춰 첫 글자를 읽게 */
+      92%  { transform: translateX(var(--shift)); }
+      100% { transform: translateX(var(--shift)); }
     }
     .turn-arrow-box {
       width: 44px; height: 44px;
@@ -278,7 +297,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v16 · 08-27</div>
+  <div class="build-tag" id="build-tag">v18 · 08-27</div>
 
   <div class="location-box">
     <div class="label">현재 위치</div>
@@ -333,7 +352,7 @@
     <div class="turn-arrow-box" id="turn-arrow">↑</div>
     <div class="turn-info">
       <div class="turn-dist" id="turn-dist">--</div>
-      <div class="turn-text" id="turn-text">--</div>
+      <div class="turn-text"><span class="marquee" id="turn-text">--</span></div>
     </div>
   </div>
 
@@ -803,6 +822,37 @@
       }
     }
     return drew;
+  }
+
+  //  ══════════════════════════════════════════
+  //   ★ 경로를 따라 타일을 미리 받아둔다
+  //  ══════════════════════════════════════════
+  //   "처음엔 길이 없다가 걸어가니 없던 길이 생긴다" — 타일이 그제야 도착한 것이다.
+  //   화면에 보이는 곳만 받으니, 앞으로 갈 곳은 도착해서야 받기 시작한다.
+  //   ★ 경로를 받는 즉시 그 위의 타일을 미리 받아둔다.
+  //   ※ 한 번만 한다. 매 프레임 도는 일이 아니다.
+  let prefetchedFor = '';
+  function prefetchRouteTiles() {
+    if (!routeCoords.length) return;
+    const sig = routeCoords.length + '/' + routeCoords[0].lat.toFixed(4);
+    if (sig === prefetchedFor) return;
+    prefetchedFor = sig;
+    //  ★ 욕심내지 않는다. 캐시가 40장인데 미리 79장을 받으면
+    //    **지금 보고 있는 타일을 밀어낸다.** 화면이 오히려 비어버린다.
+    //    경로 위 지점만, 이웃 칸 없이, 12장까지만.
+    //  ※ 담을 수 있는 것보다 많이 받아오는 건 받지 않느니만 못하다.
+    const z = tileZ() - RZ_DROP;
+    const seen = new Set();
+    const LIMIT = 12;
+    const step = Math.max(1, Math.floor(routeCoords.length / 24));
+    for (let i = 0; i < routeCoords.length && seen.size < LIMIT; i += step) {
+      const t = latLngToTilePixel(routeCoords[i].lat, routeCoords[i].lng, z);
+      const tx = Math.floor(t.tx), ty = Math.floor(t.ty);
+      const key = `${z}/${tx}/${ty}`;
+      if (seen.has(key) || rasterCache[key]) continue;
+      seen.add(key);
+      loadRasterTile(z, tx, ty);
+    }
   }
 
   function drawRasterMap(cx, cy) {
@@ -1534,6 +1584,7 @@
         currentStepIndex = 0;
         // ★ 진행률을 재려면 경로를 한 번 훑어 누적거리를 만들어 둬야 한다
         buildRouteIndex(route.duration);
+        prefetchRouteTiles();          // 앞으로 갈 길의 타일을 미리 받아둔다
         const distKm = (route.distance / 1000).toFixed(1);
         const etaMin = Math.round(route.duration / 60);
         document.getElementById('nav-eta').textContent = etaMin;
@@ -2071,9 +2122,26 @@
       }
     }
 
-    // 현재 위치 (펄스 애니메이션)
+    //  ══════════════════════════════════════════
+    //   현재 위치 — 경로에 붙어 있으면 경로 위에 그린다
+    //  ══════════════════════════════════════════
+    //  ★★ "경로에서 내 아이콘이 1~2cm 우측으로 벗어난다" 의 원인.
+    //    GPS 는 도심에서 몇 미터씩 튄다. 그 값을 그대로 찍으니
+    //    선 옆에 나란히 떠 있게 된다.
+    //  ★ 이미 '경로 위 내 자리(alongNow)' 를 재고 있다. 붙어 있을 때는
+    //    그 자리에 그린다. GPS 원값이 아니라 **경로 위로 맞춰 그리는 것**이다.
+    //  ※ 이건 경로를 도로에 끌어다 붙이는 것(스냅)과 다르다.
+    //    남의 데이터를 건드리는 게 아니라, **내 위치를 내 경로 위에** 놓는 것이다.
+    //    차량 내비가 전부 이렇게 한다.
+    //  ※ 벗어났으면 맞추지 않는다. 벗어난 것을 감추면 '내가 지금 경로 밖' 이라는
+    //    사실 자체가 안 보인다 — 그게 훨씬 나쁘다. 노란 점선이 그때 나온다.
     if (currentPos) {
-      const { x, y } = latLngToPixel(currentPos.lat, currentPos.lng);
+      let showAt = currentPos;
+      if (!linkTarget && routeCoords.length > 1 && routeCum.length) {
+        const onLine = pointAlongRoute(alongNow);
+        if (onLine) showAt = onLine;
+      }
+      const { x, y } = latLngToPixel(showAt.lat, showAt.lng);
       drawCurrentPos(x, y);
     }
 
@@ -2195,8 +2263,8 @@
       const spread = 0.42;                       // 부채꼴 폭 (약 48도)
       const R = 46;
       const g = ctx.createRadialGradient(x, y, 8, x, y, R);
-      g.addColorStop(0, 'rgba(92,200,255,0.85)');
-      g.addColorStop(1, 'rgba(92,200,255,0)');
+      g.addColorStop(0, 'rgba(255,255,255,0.9)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
       ctx.beginPath();
       ctx.moveTo(x, y);
       ctx.arc(x, y, R, rad - spread, rad + spread);
@@ -2213,9 +2281,8 @@
       ctx.beginPath();
       ctx.moveTo(9, 0); ctx.lineTo(-6, -6); ctx.lineTo(-6, 6);
       ctx.closePath();
-      ctx.fillStyle = '#5cc8ff';
-      ctx.shadowColor = 'rgba(92,200,255,0.9)'; ctx.shadowBlur = 10;
-      ctx.fill(); ctx.shadowBlur = 0;
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
       ctx.restore();
     }
 
@@ -2223,24 +2290,28 @@
 
   /// 현재 위치 점 (펄스 + 흰 링 + 안쪽 원)
   function drawPosDot(x, y) {
+    //  ★★ 경로선(초록) 위에 파란 점이 겹치면 둘 다 안 보인다.
+    //    더하기 화면에서는 색이 겹치면 밝기가 더해져 뭉개진다.
+    //  ★ 밑을 **지우고** 그린다. destination-out 은 이미 그린 것을 지운다 —
+    //    더하기 화면에서 지워진 곳은 '검정 = 투명' 이라 완전히 비어 보인다.
+    //    그래서 점 둘레에 진짜 빈 고리가 생기고, 점이 선에서 확실히 떨어진다.
+    //  ※ 반투명으로 덮는 방법은 안 된다 (밝기가 더해질 뿐이다).
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath(); ctx.arc(x, y, 17, 0, Math.PI * 2);
+    ctx.fillStyle = '#000'; ctx.fill();
+    ctx.restore();
+
     //  ★★ "글로우된 파란색이 뭐냐" — 이것이었다. 계속 커졌다 사라지는 펄스 링.
     //    불투명 화면에서는 '여기 내가 있다' 는 표시지만,
     //    더하기 화면에서는 **움직이는 파란 안개**다. 지도를 가리고 시선을 뺏는다.
     //  ※ 내 위치는 화면에서 늘 같은 자리(아래 1/3)에 있다. 찾을 필요가 없다.
     //    찾을 필요가 없는 것을 깜빡여서 알릴 이유도 없다.
 
-    // 중간 링 (흰색)
-    ctx.beginPath(); ctx.arc(x, y, 11, 0, Math.PI*2);
-    ctx.fillStyle = '#fff';
-    //  ★ 글로우를 뺐다 — 더하기 화면에서 번짐은 경계를 흐릴 뿐이다
-    ctx.fill();
-
-    // 내부 파란/보라 그라디언트 원 (Meta 스타일)
-    const grad = ctx.createRadialGradient(x-2, y-2, 1, x, y, 9);
-    grad.addColorStop(0, '#c4a8ff');
-    grad.addColorStop(1, '#5cc8ff');
-    ctx.beginPath(); ctx.arc(x, y, 9, 0, Math.PI*2);
-    ctx.fillStyle = grad; ctx.fill();
+    //  ★ 흰색으로 그린다. 초록(경로)·노랑(접근)·빨강(목적지) 어디에도 안 겹치고,
+    //    더하기 화면에서 가장 밝은 색이다. 파랑은 초록과 밝기가 비슷해 묻혔다.
+    ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff'; ctx.fill();
   }
 
   // ── 줌 (키보드 전용) ──
@@ -2481,7 +2552,7 @@
         speak('목적지에 도착했습니다');
         document.getElementById('turn-arrow').textContent = '🏁';
         document.getElementById('turn-dist').textContent = '도착!';
-        document.getElementById('turn-text').textContent = dest.name;
+        setTurnText(dest.name);
         document.getElementById('nav-eta').textContent = '도착';
         document.getElementById('nav-dist').textContent = '0.0';
         return;
@@ -2569,10 +2640,34 @@
   }
 
   // ── 턴 안내 ──
+  //  ★ 칸을 넘어가면 우 → 좌로 흐르게 한다. 안 넘으면 가만히 둔다.
+  //    ※ 움직이는 것은 시선을 뺏는다. 필요할 때만 움직여야 한다.
+  //    ※ 속도를 글 길이에 맞춘다 — 길수록 오래. 고정 속도로 하면
+  //      짧은 글은 굼뜨고 긴 글은 놓친다.
+  function setTurnText(txt) {
+    const el = document.getElementById('turn-text');
+    if (!el) return;
+    el.classList.remove('run');
+    el.style.removeProperty('--shift');
+    el.style.removeProperty('animation-duration');
+    el.textContent = txt;
+    //  레이아웃이 잡힌 뒤에 재야 넘치는지 알 수 있다
+    requestAnimationFrame(() => {
+      const box = el.parentElement;
+      if (!box) return;
+      const over = el.scrollWidth - box.clientWidth;
+      if (over > 4) {
+        el.style.setProperty('--shift', (-over - 8) + 'px');
+        el.style.animationDuration = Math.max(4, (over + 8) / 28 + 3).toFixed(1) + 's';
+        el.classList.add('run');
+      }
+    });
+  }
+
   function updateStepUI(step) {
     if (!step) return;
     document.getElementById('turn-arrow').textContent = getStepArrow(step);
-    document.getElementById('turn-text').textContent = getStepText(step);
+    setTurnText(getStepText(step));
     document.getElementById('turn-dist').textContent = '--';
     spokenDistBucket = null;   // 새 스텝 → 안내 버킷 초기화
     spokenBucketVal = null;
@@ -2740,7 +2835,7 @@
       else if (e.key === 'ArrowRight') {
         voiceOn = !voiceOn;
         if (!voiceOn && 'speechSynthesis' in window) speechSynthesis.cancel();
-        document.getElementById('turn-text').textContent = voiceOn ? '🔊 음성 안내 켜짐' : '🔇 음성 안내 꺼짐';
+        setTurnText(voiceOn ? '🔊 음성 안내 켜짐' : '🔇 음성 안내 꺼짐');
         if (voiceOn) speak('음성 안내를 켭니다');
         setTimeout(() => {
           if (routeSteps[currentStepIndex]) updateStepUI(routeSteps[currentStepIndex]);
