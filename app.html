@@ -31,7 +31,12 @@
     .screen.active { display: flex; }
 
     /* ── 홈 ── */
-    #screen-home { padding: 28px 24px; gap: 12px; background: #000; }
+    #screen-home { padding: 24px 24px 6px; gap: 8px; background: #000; overflow: hidden; }
+    /* 화면 전체가 하나로 흐른다. 넘치면 통째로 밀어 올린다. */
+    .home-scroll {
+      display: flex; flex-direction: column; gap: 10px;
+      transition: transform 120ms; will-change: transform;
+    }
     .title { font-size: 22px; font-weight: 700; color: #fff; text-align: center; letter-spacing: -0.5px; }
     .title span { color: #5cc8ff; }
 
@@ -58,7 +63,12 @@
       box-shadow: 0 0 16px rgba(92,200,255,0.55); outline: none; color: #fff;
     }
 
-    .dest-list { display: flex; flex-direction: column; gap: 6px; flex: 1; overflow: hidden; }
+    /* ★ 담은 즐겨찾기가 늘면 화면 아래로 넘친다. 그런데 overflow:hidden 이라
+         넘친 것은 보이지도, 고를 수도 없었다.
+         ※ 스크롤 막대는 쓰지 않는다 — 안경에는 잡을 것이 없다.
+           대신 고른 항목이 보이도록 목록을 위로 밀어 올린다(focusHome). */
+    .dest-list { display: flex; flex-direction: column; gap: 6px; }
+    .dest-list-inner { display: flex; flex-direction: column; gap: 6px; }
     .dest-item {
       background: rgba(255,255,255,0.04); border: 2px solid transparent;
       border-radius: 12px; padding: 11px 14px; cursor: pointer;
@@ -319,11 +329,17 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v33 · 08-28</div>
+  <div class="build-tag" id="build-tag">v37 · 08-28</div>
 
   <!-- ★ 현재 위치를 즐겨찾기에 담을 수 있어야 한다.
        지금 서 있는 곳(숙소 정문·사무실 입구)은 주소로 검색해서 나오는 자리와
        다를 때가 많다. 서 있는 그 자리를 그대로 담는 게 가장 정확하다. -->
+  <!-- ★★ 최근 목록과 즐겨찾기가 남은 공간을 나눠 갖다 보니, 위쪽 요소를 빼고 나면
+       즐겨찾기 칸이 거의 0 으로 눌렸다. 항목은 만들어졌는데 **보일 자리가 없었다.**
+       커서만 그 안을 지나가니 "빈 항목만 있다" 로 보였다.
+       ★ 칸마다 나눠 담지 않고 **화면 전체를 하나로 흐르게** 한다.
+         고른 항목이 보이도록 이 판을 통째로 밀어 올린다. -->
+  <div class="home-scroll" id="home-scroll">
   <div class="location-box focusable" id="here-box" tabindex="0" role="button">
     <div class="label">현재 위치 <span style="color:#7dd8ff">· Enter 로 즐겨찾기</span></div>
     <div class="value" id="current-location">위치 확인 중...</div>
@@ -341,7 +357,8 @@
   </div>
   <div class="section-label" id="preset-label">즐겨찾기</div>
   <div class="dest-list" id="dest-list"></div>
-  <div class="hint">↑↓ 이동 · Enter 선택 · → 즐겨찾기 담기/지우기</div>
+  </div>
+  <div class="hint">↑↓ 이동(끝에서 반대편으로) · Enter 선택 · → 즐겨찾기 담기/지우기</div>
 </div>
 
 <!-- 검색 -->
@@ -595,10 +612,20 @@
   function isFav(d) {
     return loadFavs().some(f => f.name === d.name);
   }
+  //  ★ 한도는 **나라마다 따로** 센다.
+  //    합쳐서 세면 청두에서 많이 담는 사이 한국 즐겨찾기가 밀려난다 —
+  //    돌아와서 보면 없어져 있는 셈이라 곤란하다.
+  //  ※ 넉 달 머무는 곳이면 숙소·사무실·식당·병원이 금방 쌓인다.
+  //    저장 공간은 문제가 안 되니 넉넉히 둔다.
+  const FAV_MAX = 30;
   function addFav(d) {
-    const list = loadFavs().filter(f => f.name !== d.name);
-    list.unshift({ name: d.name, addr: d.addr || '', lat: d.lat, lng: d.lng, icon: '★' });
-    saveFavs(list.slice(0, 12));
+    const item = { name: d.name, addr: d.addr || '', lat: d.lat, lng: d.lng, icon: '★' };
+    const rest = loadFavs().filter(f => f.name !== d.name);
+    const mine = favCountry(item);
+    const same = [item, ...rest.filter(f => favCountry(f) === mine)].slice(0, FAV_MAX);
+    const other = rest.filter(f => favCountry(f) !== mine);
+    //  담은 순서를 지키려고 원래 자리대로 다시 엮는다
+    saveFavs([...same, ...other]);
   }
   function removeFav(name) {
     saveFavs(loadFavs().filter(f => f.name !== name));
@@ -1614,8 +1641,11 @@
     //    청두에서 서울 목록을 볼 이유가 없다.
     const recents = loadRecentDests().filter(d => favCountry(d) === currentCountry());
     const recentSection = document.getElementById('recent-section');
-    const recentList = document.getElementById('recent-list');
-    recentList.innerHTML = '';
+    const recentListBox = document.getElementById('recent-list');
+    recentListBox.innerHTML = '';
+    const recentList = document.createElement('div');
+    recentList.className = 'dest-list-inner';
+    recentListBox.appendChild(recentList);
     if (recents.length > 0) {
       recentSection.style.display = 'block';
       recents.forEach(dest => {
@@ -1639,8 +1669,11 @@
     // 즐겨찾기 = 내가 담은 것 + 기본 목록 (이름이 같으면 담은 쪽만)
     const favs = favsHere();
     const shown = favs.concat(PRESETS.filter(p => !favs.some(f => f.name === p.name)));
-    const list = document.getElementById('dest-list');
-    list.innerHTML = '';
+    const listBox = document.getElementById('dest-list');
+    listBox.innerHTML = '';
+    const list = document.createElement('div');
+    list.className = 'dest-list-inner';
+    listBox.appendChild(list);
     shown.forEach((dest) => {
       const el = document.createElement('div');
       el.className = 'dest-item focusable';
@@ -1672,6 +1705,26 @@
       homeFocusables[idx].classList.add('focused');
       homeFocusables[idx].focus();
       focusIndex = idx;
+      scrollHomeIntoView(homeFocusables[idx]);
+    }
+  }
+
+  //  ★ 고른 항목이 화면 밖이면 **화면 전체를** 그만큼 밀어 올린다.
+  //    ※ 스크롤 막대를 쓰지 않는다 — 안경에는 잡을 것이 없다.
+  //    ※ 칸마다 따로 밀면 칸이 눌렸을 때 아무 소용이 없다. 통째로 민다.
+  const HOME_TOP = 70, HOME_BOTTOM = 560;   // 이 사이에 들어오게 한다
+  function scrollHomeIntoView(el) {
+    const pane = document.getElementById('home-scroll');
+    if (!pane || !el) return;
+    const cur = parseFloat(pane.dataset.shift || '0');
+    const er = el.getBoundingClientRect();
+    let shift = cur;
+    if (er.bottom > HOME_BOTTOM) shift = cur - (er.bottom - HOME_BOTTOM) - 6;
+    else if (er.top < HOME_TOP)  shift = cur + (HOME_TOP - er.top) + 6;
+    if (shift > 0) shift = 0;               // 맨 위보다 더 내려가지 않는다
+    if (shift !== cur) {
+      pane.dataset.shift = String(shift);
+      pane.style.transform = `translateY(${shift}px)`;
     }
   }
 
@@ -3258,8 +3311,18 @@
     }
 
     if (active === 'screen-home') {
-      if (e.key === 'ArrowDown') { focusHome(Math.min(focusIndex+1, homeFocusables.length-1)); e.preventDefault(); }
-      else if (e.key === 'ArrowUp') { focusHome(Math.max(focusIndex-1, 0)); e.preventDefault(); }
+      //  ★★ "네 번 내려갔다가 올라오려면 또 네 번" — 말이 안 되는 조작이었다.
+      //    끝에서 멈추지 말고 반대편으로 넘어가게 한다.
+      //    맨 아래에서 ↓ 하면 맨 위로, 맨 위에서 ↑ 하면 맨 아래로.
+      //    ※ 목록이 길수록 되돌아오는 길이 짧아야 한다.
+      if (e.key === 'ArrowDown') {
+        const n = homeFocusables.length;
+        focusHome(n ? (focusIndex + 1) % n : 0); e.preventDefault();
+      }
+      else if (e.key === 'ArrowUp') {
+        const n = homeFocusables.length;
+        focusHome(n ? (focusIndex - 1 + n) % n : 0); e.preventDefault();
+      }
       //  ★ → 하나로 담고 지운다.
       //    담은 것이면 지울지 묻고, 아니면 담는다. 최근이든 기본이든 같다.
       //    ※ 조작이 자리마다 다르면 외울 게 늘어난다. 뜻이 같으면 키도 같아야 한다.
@@ -3350,7 +3413,11 @@
     setTimeout(() => document.getElementById('search-input').focus(), 50);
   }
   function closeSearch() {
+    //  ★★ 여기서 목록을 다시 만들지 않아서, 검색 화면에서 담은 즐겨찾기가
+    //    홈에 안 나왔다. 화면만 바꾸고 내용은 예전 것 그대로였던 것이다.
+    //  ※ 화면을 되돌릴 때는 그 사이 바뀐 것이 있는지 생각한다.
     showScreen('screen-home');
+    buildHome();
     focusHome(0);
   }
 
