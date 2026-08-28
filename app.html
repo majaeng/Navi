@@ -297,7 +297,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v28 · 08-27</div>
+  <div class="build-tag" id="build-tag">v29 · 08-27</div>
 
   <div class="location-box">
     <div class="label">현재 위치</div>
@@ -1708,29 +1708,86 @@
       });
   }
 
-  function doTencentSearch(q) {
-    // 현재위치 기준 5km 반경 검색, 없으면 중국 전역
-    const boundary = currentPos
-      ? `nearby(${currentPos.lat},${currentPos.lng},5000,1)`
-      : 'region(中国,0)';
-    const url = `https://apis.map.qq.com/ws/place/v1/search?keyword=${encodeURIComponent(q)}&boundary=${boundary}&page_size=8&key=${TENCENT_KEY}`;
-    jsonp(url).then(data => {
-      const el = document.getElementById('search-status');
-      if (data.status === 0 && data.data && data.data.length > 0) {
-        const normalized = data.data.map(p => {
-          // GCJ-02 → WGS-84 변환 (GPS/OSRM용)
-          const wgs = gcj02ToWgs84(p.location.lat, p.location.lng);
-          return { name: p.title, addr: p.address, lat: wgs.lat, lng: wgs.lng, dist: null };
-        });
-        renderSearchResults(normalized);
-      } else {
-        el.className = 'search-empty'; el.textContent = '검색 결과가 없습니다';
-        document.getElementById('search-results').innerHTML = '';
+  //  ══════════════════════════════════════════
+  //   중국 검색 — 세 갈래로 찾는다
+  //  ══════════════════════════════════════════
+  //  ★★ 청두 주소를 넣었더니 "검색 결과가 없습니다" 가 떴다. 재보니 둘 다 틀렸다.
+  //
+  //   ① **키가 막힌 것을 결과 없음으로 감추고 있었다.**
+  //      텐센트가 `status 121 此key每日调用量已达到上限`(하루 한도 초과) 를
+  //      돌려줬는데, 앱은 status!==0 을 전부 '결과 없음' 으로 뭉갰다.
+  //      → 원인을 감추면 고칠 수가 없다. **온 대로 보여준다.**
+  //
+  //   ② **주소는 장소검색으로 못 푼다.**
+  //      place/search 는 '이름' 을 찾는다. `吉瑞二路188号1栋1单元` 같은 주소는
+  //      geocoder 로 풀어야 한다 (실측: 신뢰도 7 · 정밀도 9 로 정확히 나옴).
+  //      게다가 반경 5km 로만 찾고 있었는데 高新区는 천부광장에서 11km 다.
+  //
+  //  ★ 그래서 가까운 곳 → 넓은 곳 → 주소 풀기 순으로 간다.
+  //    앞에서 찾으면 뒤는 안 부른다 (호출 한도를 아낀다).
+  const TENCENT_ERR = {
+    110: '요청 출처가 이 키에 등록되지 않았습니다',
+    111: '키 인증에 실패했습니다',
+    112: '요청이 거부되었습니다',
+    120: '요청이 너무 잦습니다 (잠시 뒤 다시)',
+    121: '오늘 이 키의 호출 한도를 다 썼습니다',
+    190: '키가 올바르지 않습니다',
+    310: '요청 값이 잘못되었습니다',
+  };
+
+  function tencentSearchUrl(q, boundary) {
+    return `https://apis.map.qq.com/ws/place/v1/search?keyword=${encodeURIComponent(q)}`
+         + `&boundary=${boundary}&page_size=8&key=${TENCENT_KEY}`;
+  }
+
+  async function doTencentSearch(q) {
+    const el = document.getElementById('search-status');
+    const show = list => renderSearchResults(list);
+    const fail = msg => {
+      el.className = 'search-empty';
+      el.textContent = msg;
+      document.getElementById('search-results').innerHTML = '';
+    };
+    const toWgs = p => {
+      const w = gcj02ToWgs84(p.location.lat, p.location.lng);
+      return { name: p.title, addr: p.address || '', lat: w.lat, lng: w.lng, dist: null };
+    };
+
+    try {
+      // ① 가까운 곳부터 (5km)
+      if (currentPos) {
+        const g = wgs84ToGcj02(currentPos.lat, currentPos.lng);
+        const d = await jsonp(tencentSearchUrl(q, `nearby(${g.lat},${g.lng},5000,1)`));
+        if (d.status !== 0) return fail(TENCENT_ERR[d.status] || `검색 실패 (${d.status}) ${d.message || ''}`);
+        if (d.data && d.data.length) return show(d.data.map(toWgs));
       }
-    }).catch(() => {
-      document.getElementById('search-status').className = 'search-empty';
-      document.getElementById('search-status').textContent = '검색 오류가 발생했습니다';
-    });
+
+      // ② 더 넓게 (50km) — 같은 도시 안이면 여기서 잡힌다
+      if (currentPos) {
+        const g = wgs84ToGcj02(currentPos.lat, currentPos.lng);
+        const d = await jsonp(tencentSearchUrl(q, `nearby(${g.lat},${g.lng},50000,1)`));
+        if (d.status !== 0) return fail(TENCENT_ERR[d.status] || `검색 실패 (${d.status}) ${d.message || ''}`);
+        if (d.data && d.data.length) return show(d.data.map(toWgs));
+      }
+
+      // ③ 주소로 풀어본다 — 장소 이름이 아니라 주소일 때
+      const gd = await jsonp(`https://apis.map.qq.com/ws/geocoder/v1/?address=${encodeURIComponent(q)}&key=${TENCENT_KEY}`);
+      if (gd.status !== 0) return fail(TENCENT_ERR[gd.status] || `검색 실패 (${gd.status}) ${gd.message || ''}`);
+      const r = gd.result;
+      if (r && r.location) {
+        const w = gcj02ToWgs84(r.location.lat, r.location.lng);
+        //  ※ 신뢰도가 낮으면 엉뚱한 곳일 수 있다. 숨기지 말고 같이 보여준다.
+        const weak = (r.reliability != null && r.reliability < 5);
+        return show([{
+          name: r.title || q,
+          addr: (r.address || '') + (weak ? '  (대략 위치)' : ''),
+          lat: w.lat, lng: w.lng, dist: null,
+        }]);
+      }
+      fail('검색 결과가 없습니다');
+    } catch (e) {
+      fail('검색 오류: ' + (e && e.message ? e.message : '연결 실패'));
+    }
   }
 
   function renderSearchResults(data) {
