@@ -329,7 +329,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v37 · 08-28</div>
+  <div class="build-tag" id="build-tag">v38 · 08-28</div>
 
   <!-- ★ 현재 위치를 즐겨찾기에 담을 수 있어야 한다.
        지금 서 있는 곳(숙소 정문·사무실 입구)은 주소로 검색해서 나오는 자리와
@@ -437,7 +437,25 @@
   <!-- 뒤로 (Escape 키로도 동작, 버튼은 최소화) -->
   <button class="back-btn focusable" id="back-btn">✕</button>
 
-  <!-- 지울지 묻는 창 — 되돌릴 수 없는 일은 반드시 한 번 묻는다 -->
+
+  <!-- 로딩 -->
+  <!-- ★ hidden 을 명시한다. 전에는 startNav 의 showLoading→hideLoading 이
+       결과적으로 가려주고 있었을 뿐이다. 그 호출을 상태 줄로 옮겼으므로
+       여기에 hidden 이 없으면 검은 덮개가 안내 화면을 영원히 덮는다. -->
+  <div class="loading-overlay hidden" id="loading-overlay">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loading-text">경로 계산 중...</div>
+  </div>
+</div>
+
+  <!-- ══════════════════════════════════════════
+       지울지 묻는 창 — **모든 화면 바깥**에 둔다
+       ══════════════════════════════════════════
+       ★★ 처음엔 이걸 안내 화면(screen-nav) 안에 넣었다. 그 화면은 홈에서
+         display:none 이라 **팝업이 보이지 않았다.** 그런데 코드상으로는 열린
+         상태라, 키 처리가 "팝업이 떠 있으니 뒤 화면은 무시" 하면서 ↑↓ 를 다 삼켰다.
+         → 즐겨찾기를 담고 나면 커서가 안 움직이는 것처럼 보였다.
+       ※ 화면 위에 겹쳐 뜨는 것은 어느 화면에도 속하면 안 된다. -->
   <div class="confirm-back hidden" id="confirm-back">
     <div class="confirm-box">
       <div class="confirm-msg" id="confirm-msg"></div>
@@ -449,15 +467,6 @@
     </div>
   </div>
 
-  <!-- 로딩 -->
-  <!-- ★ hidden 을 명시한다. 전에는 startNav 의 showLoading→hideLoading 이
-       결과적으로 가려주고 있었을 뿐이다. 그 호출을 상태 줄로 옮겼으므로
-       여기에 hidden 이 없으면 검은 덮개가 안내 화면을 영원히 덮는다. -->
-  <div class="loading-overlay hidden" id="loading-overlay">
-    <div class="spinner"></div>
-    <div class="loading-text" id="loading-text">경로 계산 중...</div>
-  </div>
-</div>
 
 <script>
   // ※ 카카오 키는 더 이상 쓰지 않는다 (검색을 워커로 옮김)
