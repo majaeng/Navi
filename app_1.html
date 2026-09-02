@@ -1,0 +1,3847 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
+  <meta name="mrbd-web-app-capable" content="yes">
+  <!-- ══════════════════════════════════════════
+       ★★ 이걸 안 넣어서 하루에 두 번 헛돌았다.
+       ══════════════════════════════════════════
+       올린 건 분명히 올라갔는데 안경에서는 옛 화면이 그대로 떴다.
+       그래서 "고친 게 안 먹는다" 고 판단하고 **멀쩡한 코드를 다시 팠다.**
+       ※ 안 되는 것 같으면 **무엇이 실행되고 있는지부터** 확인한다.
+         고친 코드가 실행조차 안 되고 있을 수 있다.
+       아래 두 줄과 화면 구석의 판 번호가 그 확인을 대신해준다. -->
+  <!-- ★★ 문지기(index.html)에만 매니페스트를 걸어놨더니, 앱으로 갈아끼우는
+       순간 그 연결이 사라졌다. iOS 는 그때 매니페스트를 못 찾는다.
+       → 공유 시트의 Glass Assist 가 죽는다.
+       ※ 화면을 갈아끼우는 구조에서는 **양쪽 다** 갖춰야 한다.
+         하나만 해두면 갈아끼운 뒤에 없어진다. -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <title>KO-Navi</title>
+  <!-- 안경 앱 격자에 쓰이는 아이콘.
+       문서: Unicode 기호나 52x52 이상 PNG. SVG 는 안 된다. -->
+  <link rel="icon" href="/navi-icon-192.png" sizes="192x192" type="image/png">
+  <link rel="icon" href="/navi-icon-96.png" sizes="96x96" type="image/png">
+  <link rel="apple-touch-icon" href="/navi-icon-192.png" sizes="192x192">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 600px; height: 600px;
+      overflow: hidden; background: #000; color: #fff;
+      font-family: -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+    }
+    .screen { width: 600px; height: 600px; display: none; flex-direction: column; }
+    .screen.active { display: flex; }
+
+    /* ── 홈 ── */
+    #screen-home { padding: 24px 24px 6px; gap: 8px; background: #000; overflow: hidden; }
+    /* 화면 전체가 하나로 흐른다. 넘치면 통째로 밀어 올린다. */
+    .home-scroll {
+      display: flex; flex-direction: column; gap: 10px;
+      transition: transform 120ms; will-change: transform;
+    }
+    .title { font-size: 22px; font-weight: 700; color: #fff; text-align: center; letter-spacing: -0.5px; }
+    .title span { color: #5cc8ff; }
+
+    .build-tag {
+      position: absolute; top: 8px; right: 12px;
+      font-size: 14px; color: #7d8fa0; letter-spacing: 0.5px;
+      z-index: 3; pointer-events: none;
+    }
+    .location-box {
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px; padding: 10px 14px;
+    }
+    .location-box .label { font-size: 16px; color: #b8c8d8; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .location-box .value { color: #5cc8ff; font-size: 16px; }
+
+    .search-btn {
+      background: rgba(255,255,255,0.05); border: 1.5px solid rgba(255,255,255,0.12);
+      border-radius: 12px; padding: 13px 16px;
+      cursor: pointer; display: flex; align-items: center; gap: 10px;
+      color: #c0ccd8; font-size: 18px; transition: all 150ms;
+    }
+    .search-btn:focus, .search-btn.focused {
+      border-color: #5cc8ff; background: rgba(92,200,255,0.08);
+      box-shadow: 0 0 16px rgba(92,200,255,0.55); outline: none; color: #fff;
+    }
+
+    /* ★ 담은 즐겨찾기가 늘면 화면 아래로 넘친다. 그런데 overflow:hidden 이라
+         넘친 것은 보이지도, 고를 수도 없었다.
+         ※ 스크롤 막대는 쓰지 않는다 — 안경에는 잡을 것이 없다.
+           대신 고른 항목이 보이도록 목록을 위로 밀어 올린다(focusHome). */
+    .dest-list { display: flex; flex-direction: column; gap: 6px; }
+    .dest-list-inner { display: flex; flex-direction: column; gap: 6px; }
+    .dest-item {
+      background: rgba(255,255,255,0.04); border: 2px solid transparent;
+      border-radius: 12px; padding: 11px 14px; cursor: pointer;
+      transition: all 150ms; display: flex; align-items: center; gap: 10px; min-height: 50px;
+    }
+    .dest-item:focus, .dest-item.focused {
+      outline: none; border-color: #5cc8ff; background: rgba(92,200,255,0.08);
+      box-shadow: 0 0 0 1px rgba(92,200,255,0.2);
+    }
+    .dest-item .icon { font-size: 19px; }
+    .dest-item .name { font-size: 17px; font-weight: 600; }
+    .dest-item .addr { font-size: 16px; color: #b8c8d8; margin-top: 1px; }
+    .hint { font-size: 16px; color: #9fb0c0; text-align: center; }
+    /*  ── 즐겨찾기 나라 탭 ──
+        ★ 색만으로 알리지 않는다. 고른 쪽에 ● 를 붙인다.
+          예전에 포커스와 선택을 둘 다 옅은 하늘색으로 뒀다가
+          "모드가 안 바뀐다" 가 나왔다. 글자로도 남겨야 한다.
+        ★ 반투명을 쓰지 않는다. 안 고른 쪽은 흐리게가 아니라 **어두운 회색**이다.
+          더하기 화면에서 알파 0.5 는 '연하게' 가 아니라 배경보다 어두워지는 것이다. */
+    .fav-tabs {
+      display: flex; gap: 18px; padding: 6px 4px; border-radius: 10px;
+      border: 2px solid transparent; cursor: pointer;
+    }
+    .fav-tabs:focus, .fav-tabs.focused { outline: none; border-color: #5cc8ff; }
+    .fav-tabs .tab { font-size: 17px; font-weight: 700; color: #6b7a88; }
+    .fav-tabs .tab.on { color: #fff; }
+    /*  ★★ "모드가 바뀔 때도 있고 안 바뀔 때도 있다" 의 원인이 여기 있었다.
+        옛 값:  포커스 = 테두리 하늘색 · 배경 하늘 8%
+                선택됨 = 테두리 하늘색 60% · 배경 하늘 15%
+        더하기 화면에서 이 둘은 **구분이 안 된다.** 실제로는 바뀌었는데
+        바뀐 것처럼 보이지 않았다.
+        ※ 상태가 두 가지면 표시도 두 가지여야 한다. 같은 색의 농담 차이는
+          이 화면에서 '같은 것' 이다. */
+    .mode-btn {
+      flex: 1; background: none; border: 2px solid rgba(255,255,255,0.55);
+      border-radius: 12px; padding: 11px 10px; font-size: 17px; font-weight: 700;
+      cursor: pointer; color: #ffffff; transition: none; display: flex;
+      align-items: center; justify-content: center; gap: 6px;
+    }
+    /* 포커스 = '지금 여기를 가리키고 있다' → 하늘색 굵은 테두리 */
+    .mode-btn:focus, .mode-btn.focused {
+      border-color: #5cc8ff; border-width: 3px; outline: none;
+    }
+    /* 선택됨 = '지금 이 모드다' → 초록 글자. 색으로 구분한다 */
+    .mode-btn.active-mode {
+      color: #8dffab; border-color: #8dffab; border-width: 3px;
+    }
+    .mode-btn.active-mode.focused {
+      border-color: #5cc8ff;      /* 테두리는 포커스, 글자는 선택 — 동시에 읽힌다 */
+    }
+    .section-label { font-size: 16px; color: #a8b8c8; text-transform: uppercase; letter-spacing: 0.8px; padding: 0 2px; }
+
+    /* ── 검색 ── */
+    #screen-search-input { padding: 20px; gap: 12px; background: #000; }
+    .search-header { display: flex; align-items: center; gap: 10px; }
+    .search-back { background: none; border: none; color: #5cc8ff; font-size: 20px; cursor: pointer; padding: 4px 8px; }
+    /* ★ 안경은 더하기 화면이라 '흐린 채움' 은 사실상 안 보인다.
+       결과 항목이 초점 없을 때 테두리가 투명이고 배경이 4% 흰색이라
+       어디부터 어디까지가 한 항목인지 구분이 안 됐다.
+       채움 대신 '밝은 테두리 + 밝은 글자' 로 세운다. */
+    .search-input-box {
+      flex: 1; background: rgba(255,255,255,0.06);
+      border: 2px solid rgba(255,255,255,0.45);
+      border-radius: 10px; padding: 12px 14px;
+      color: #fff; font-size: 22px; outline: none;
+    }
+    .search-input-box:focus {
+      border-color: #5cc8ff; box-shadow: 0 0 16px rgba(92,200,255,0.5);
+    }
+    .search-results { display: flex; flex-direction: column; gap: 8px; flex: 1; overflow-y: auto; }
+    .search-result-item {
+      background: none;
+      border: 2px solid rgba(255,255,255,0.38);   /* 초점이 없어도 보이게 */
+      border-radius: 12px; padding: 12px 14px; cursor: pointer;
+      transition: all 150ms;
+    }
+    .search-result-item:focus, .search-result-item.focused {
+      outline: none; border-color: #5cc8ff;
+      background: rgba(92,200,255,0.16);
+      box-shadow: 0 0 18px rgba(92,200,255,0.55);
+    }
+    .search-result-item .r-name { font-size: 21px; font-weight: 700; color: #fff; }
+    .search-result-item .r-addr { font-size: 17px; color: #d4e4f2; margin-top: 3px; }
+    .search-result-item .r-dist { font-size: 17px; color: #7dd8ff; margin-top: 3px; }
+    .search-empty { color: #d4e4f2; font-size: 19px; text-align: center; padding: 30px 0; }
+    .search-loading { color: #7dd8ff; font-size: 19px; text-align: center; padding: 30px 0; }
+
+    /* ── AR 네비 ── */
+    #screen-nav { position: relative; background: #000; }
+    #ar-canvas { position: absolute; top: 0; left: 0; width: 600px; height: 600px; }
+
+    /* ★ 안내 화면 가시성
+       전에는 반투명 보라/파랑 카드에 blur 를 썼다. 일반 화면에서는 예쁘지만
+       더하기 화면에서는 색깔 반투명 배경이 그대로 '빛'이 되어 뿌옇게 번지고,
+       그 위의 글자 대비를 오히려 떨어뜨린다.
+       배경은 검게(=투명하게) 두고, 밝은 테두리와 밝은 글자로 세운다. */
+
+    /* 상단 턴 배너 */
+    .turn-banner {
+      position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+      /* ★ 검정 배경은 더하기 화면에서 그냥 투명이다 — 아무 일도 안 한다.
+         남겨두는 건 폰에서 미리 볼 때를 위해서일 뿐이다.
+         안경에서 글자를 받쳐주는 건 테두리 하나뿐이므로 흰색 100% 로 올린다. */
+      background: rgba(0,0,0,0.55);
+      border: 3px solid #ffffff;
+      border-radius: 50px; padding: 12px 22px 12px 12px;
+      display: flex; align-items: center; gap: 12px; z-index: 10;
+      white-space: nowrap;
+      /* ★ 글이 길면 띠가 화면 밖으로 자라나면서 **왼쪽 아이콘까지 잘렸다.**
+         가운데 정렬이라 넘치면 양쪽으로 삐져나간다.
+         화면(600) 안에 가두고, 넘치는 글은 안에서 흐르게 한다. */
+      max-width: 560px;
+      box-sizing: border-box;
+    }
+    .turn-info { min-width: 0; overflow: hidden; }   /* flex 안에서 줄어들 수 있게 */
+
+    /*  ★ 넘치는 글은 우 → 좌로 흐른다.
+        ※ 줄바꿈하지 않는다. 띠가 두 줄이 되면 그만큼 시야를 더 가린다.
+        ※ 안 넘치면 흐르지 않는다 — 가만히 있는 글이 읽기 쉽다.
+           움직이는 것은 시선을 뺏으므로 필요할 때만 움직인다. */
+    .marquee { display: inline-block; white-space: nowrap; }
+    .marquee.run { animation: flow linear infinite; }
+    @keyframes flow {
+      0%   { transform: translateX(0); }
+      8%   { transform: translateX(0); }            /* 잠깐 멈춰 첫 글자를 읽게 */
+      92%  { transform: translateX(var(--shift)); }
+      100% { transform: translateX(var(--shift)); }
+    }
+    .turn-arrow-box {
+      width: 44px; height: 44px;
+      background: rgba(92,200,255,0.28);
+      border: 3px solid #5cc8ff;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 32px; flex-shrink: 0;
+    }
+    /* 남은 거리 — 안내에서 가장 자주 보는 숫자다. 가장 크게. */
+    /* ★ 34px = 0.81°. 42PPD·20° 화면에서 팔 뻗은 손톱보다 작았다.
+       달리면서 흘깃 보는 숫자다. 가장 크고 가장 굵게. */
+    .turn-info .turn-dist { font-size: 46px; color: #fff; font-weight: 900; line-height: 1; }
+    .turn-info .turn-text { font-size: 25px; color: #fff; font-weight: 700; margin-top: 4px; }
+
+    /* 하단 카드 */
+    .nav-card {
+      position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.55);
+      /* ★ 시야를 가린다는 지적. 20° 화면에서 아래쪽을 통째로 먹고 있었다.
+         글자를 키운 게 화근이었다 — 잘 보이게 하려다 볼 것을 가렸다.
+         ※ 여기 숫자는 '분·km' 다. 흘깃 보는 값이지 계속 읽는 값이 아니다.
+           계속 읽는 건 위쪽 회전 거리이므로 그건 그대로 둔다. */
+      border: 2px solid #ffffff;
+      border-radius: 14px; padding: 7px 16px;
+      min-width: 0;
+      z-index: 10;
+    }
+    .nav-card-dest {
+      font-size: 19px; font-weight: 700; color: #fff;
+      margin-bottom: 3px;
+      max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .nav-card-row { display: flex; align-items: center; gap: 8px; }
+    .nav-stat { display: flex; align-items: baseline; gap: 4px; }
+    .nav-stat .stat-val { font-size: 20px; font-weight: 800; color: #8dffab; }
+    .nav-stat .stat-label { font-size: 15px; font-weight: 600; color: #fff; }
+    .nav-divider { width: 2px; height: 14px; background: #ffffff; margin: 0 6px; }
+
+    /* 상태 줄 — 회전 안내와 같은 자리를 쓰되 절대 겹치지 않는다 (하나만 뜬다) */
+    .nav-status {
+      position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+      max-width: 520px;
+      background: rgba(0,0,0,0.55);
+      border: 3px solid #ffd27a;
+      border-radius: 50px; padding: 12px 26px;
+      font-size: 26px; font-weight: 800; color: #ffd27a;
+      text-align: center; white-space: nowrap;
+      z-index: 16;
+    }
+    .nav-status.hidden { display: none; }
+
+    /* 중앙 조준점 (지금은 안 쓴다 — 위 HTML 주석 참고) */
+    .compass-dot {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      width: 10px; height: 10px;
+      border: 2px solid #ffffff;
+      border-radius: 50%;
+      z-index: 5; pointer-events: none;
+    }
+    .compass-dot::after {
+      content: ''; position: absolute;
+      top: 50%; left: 50%; transform: translate(-50%,-50%);
+      width: 4px; height: 4px;
+      background: #5cc8ff; border-radius: 50%;
+    }
+
+    /* 닫기 버튼 — 시야를 가리지 않게 작게, 다만 보이기는 해야 한다 */
+    .back-btn {
+      position: absolute; top: 16px; right: 14px;
+      width: 34px; height: 34px;
+      background: rgba(0,0,0,0.5); border: 2px solid #ffffff;
+      border-radius: 50%; color: #fff; font-size: 20px; font-weight: 700;
+      cursor: pointer; z-index: 20; opacity: 0.85;
+      display: flex; align-items: center; justify-content: center;
+      transition: opacity 200ms;
+    }
+    .back-btn:hover, .back-btn:focus {
+      opacity: 1; outline: none;
+      border-color: #5cc8ff; box-shadow: 0 0 14px rgba(92,200,255,0.6);
+    }
+
+    /* 조작 안내 */
+    .nav-help {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      background: rgba(0,0,0,0.72);
+      border: 3px solid #ffffff;
+      border-radius: 16px; padding: 18px 26px;
+      display: flex; flex-direction: column; gap: 8px;
+      font-size: 22px; font-weight: 600; color: #fff; text-align: center;
+      z-index: 25; pointer-events: none;
+      transition: opacity 400ms;
+    }
+    .nav-help.hidden { opacity: 0; }
+    .turn-banner.hidden { display: none; }
+    .nav-card.hidden { display: none; }
+
+    /* 지울지 묻는 창 */
+    .confirm-back {
+      position: absolute; inset: 0; z-index: 40;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.75);
+    }
+    .confirm-back.hidden { display: none; }
+    .confirm-box {
+      border: 3px solid #ffffff; border-radius: 18px; padding: 22px 26px;
+      background: rgba(0,0,0,0.9); max-width: 520px; text-align: center;
+    }
+    .confirm-msg { font-size: 24px; font-weight: 700; color: #fff; line-height: 1.4; }
+    .confirm-btns { display: flex; gap: 14px; justify-content: center; margin-top: 18px; }
+    .confirm-btn {
+      background: none; border: 3px solid rgba(255,255,255,0.55);
+      border-radius: 40px; padding: 10px 26px;
+      font-size: 22px; font-weight: 700; color: #fff; cursor: pointer;
+    }
+    .confirm-btn.focused { border-color: #5cc8ff; }
+    .confirm-btn.danger.focused { border-color: #ff6b6b; color: #ff8f8f; }
+    .confirm-hint { font-size: 16px; color: #9fb0c0; margin-top: 12px; }
+
+    /* 로딩 */
+    .loading-overlay {
+      position: absolute; inset: 0; background: rgba(0,0,0,0.7);
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 12px; z-index: 30;
+    }
+    .loading-overlay.hidden { display: none; }
+    .spinner {
+      width: 32px; height: 32px; border: 2.5px solid rgba(255,255,255,0.1);
+      border-top-color: #5cc8ff; border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text { font-size: 16px; color: #c0ccd8; }
+
+    /* 현재위치 펄스 애니메이션 */
+    @keyframes pulse {
+      0%   { transform: translate(-50%,-50%) scale(1); opacity: 0.6; }
+      100% { transform: translate(-50%,-50%) scale(2.5); opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- 홈 -->
+<div id="screen-home" class="screen active">
+  <div class="title">KO-<span>Navi</span></div>
+  <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
+       숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
+  <div class="build-tag" id="build-tag">v50 · 08-30</div>
+
+  <!-- ★ 현재 위치를 즐겨찾기에 담을 수 있어야 한다.
+       지금 서 있는 곳(숙소 정문·사무실 입구)은 주소로 검색해서 나오는 자리와
+       다를 때가 많다. 서 있는 그 자리를 그대로 담는 게 가장 정확하다. -->
+  <!-- ★★ 최근 목록과 즐겨찾기가 남은 공간을 나눠 갖다 보니, 위쪽 요소를 빼고 나면
+       즐겨찾기 칸이 거의 0 으로 눌렸다. 항목은 만들어졌는데 **보일 자리가 없었다.**
+       커서만 그 안을 지나가니 "빈 항목만 있다" 로 보였다.
+       ★ 칸마다 나눠 담지 않고 **화면 전체를 하나로 흐르게** 한다.
+         고른 항목이 보이도록 이 판을 통째로 밀어 올린다. -->
+  <div class="home-scroll" id="home-scroll">
+  <!-- ★ 지도 보기 (2026-08-30 사용자 요구). 검색도 즐겨찾기도 없이
+       '지금 내 자리 지도' 만 보고 싶을 때가 있다 — 첫 화면도 이제 지도다.
+       홈은 목적지를 고를 때만 들르는 곳이 됐다. -->
+  <button class="mode-btn focusable" id="btn-map" tabindex="0" style="width:100%">🗺 지도 보기</button>
+  <div class="location-box focusable" id="here-box" tabindex="0" role="button">
+    <div class="label">현재 위치 <span style="color:#7dd8ff">· Enter 로 즐겨찾기</span></div>
+    <div class="value" id="current-location">위치 확인 중...</div>
+  </div>
+  <div style="display:flex;gap:8px">
+    <button class="mode-btn focusable active-mode" id="btn-foot" tabindex="0">🚶 도보</button>
+    <button class="mode-btn focusable" id="btn-drive" tabindex="0">🚗 드라이브</button>
+  </div>
+  <div id="recent-section" style="display:none">
+    <div class="section-label">최근 목적지</div>
+    <div class="dest-list" id="recent-list"></div>
+  </div>
+  <!-- ★ 내가 담은 것과 코드에 박아둔 목록을 한 칸에 섞어놨더니
+       "담은 적 없는 게 왜 즐겨찾기에 있냐" 가 나왔다. 맞는 말이다.
+       ※ 이름표가 사실과 달라지면 화면을 믿을 수 없게 된다. 칸을 나눈다. -->
+  <div id="fav-section" style="display:none">
+    <div class="section-label">즐겨찾기</div>
+    <!-- ★ 나라 탭. 청두에 있어도 서울 즐겨찾기를 볼 수 있어야 한다.
+         ※ ←→ 는 이미 담기·지우기에 쓰고 있어서 새 키를 만들지 않는다.
+           대신 **이 줄에 커서가 올라와 있을 때만** ←→ 가 탭을 바꾼다.
+           한 키의 뜻이 자리마다 달라지지만, 이 줄에는 담을 것도 지울 것도
+           없으므로 헷갈릴 자리가 없다. -->
+    <div class="fav-tabs focusable" id="fav-tabs" tabindex="0" role="button">
+      <span class="tab" id="fav-tab-kr">한국</span>
+      <span class="tab" id="fav-tab-cn">중국</span>
+    </div>
+    <div class="dest-list" id="fav-list"></div>
+    <div class="hint" id="fav-empty" style="display:none">이 나라에 담아둔 곳이 없습니다</div>
+  </div>
+  <div class="hint" id="empty-hint" style="display:none">폰에서 목적지를 보내면 여기 남습니다</div>
+  <!-- ★★ 릴레이 상태를 눈에 보이게 한다.
+       ※ 오류를 .catch(()=>{}) 로 삼키고 있었다. 그래서 안경이 인터넷에
+         못 닿아 목적지를 못 물어보는 동안 화면은 멀쩡해 보였고,
+         멀쩡한 앱을 계속 팠다. **안 보이는 것은 없는 것처럼 다뤄진다.** -->
+  <div class="hint" id="relay-state" style="font-size:15px;color:#7a8a99">📡 확인 중…</div>
+
+  <!-- ══════════════════════════════════════════
+       ★ 장소 검색을 홈에서 뺐다
+       ══════════════════════════════════════════
+       안경에는 자판이 없어 검색을 칠 수가 없다. 사파리는 시험용으로만 쓰므로
+       검색 화면은 실제로 쓰이는 길이 아니다.
+       목적지는 이렇게 들어온다:
+         폰에서 보냄 → 안경이 5초 안에 받아 안내 시작 → 최근 목적지에 남음
+                    → → 로 즐겨찾기에 담기
+       ※ 쓰지 않는 것을 화면에 두지 않는다. 20° 화면에서는 한 줄도 비싸다.
+       ※ 검색 화면 자체는 코드에 남아 있다 — 지워서 얻을 게 없고,
+         나중에 자판이 생기면 버튼만 되살리면 된다. -->
+
+  </div>
+  <div class="hint">↑↓ 이동 · Enter 선택 · → 즐겨찾기 · ← 최근 지우기</div>
+</div>
+
+<!-- 검색 -->
+<div id="screen-search-input" class="screen">
+  <div class="search-header">
+    <button class="search-back focusable" id="search-back-btn">←</button>
+    <input class="search-input-box" id="search-input" type="text" placeholder="장소명 입력..." autocomplete="off">
+  </div>
+  <div id="search-status" class="search-empty">검색어를 입력하세요</div>
+  <div class="search-results" id="search-results"></div>
+</div>
+
+<!-- AR 네비 -->
+<div id="screen-nav" class="screen">
+  <canvas id="ar-canvas" width="600" height="600"></canvas>
+
+  <!-- 조작 안내 — 안내 시작 때 잠깐 보였다 사라진다.
+       안경에는 설명서가 없다. 처음 쓰면 종료하는 법조차 알 수 없다. -->
+
+  <!-- ★ '중앙 고정점' 을 뺐다.
+       코드 어디서도 건드리지 않는 장식이었고, 무엇보다 **현재 위치가 거기 있지 않다**
+       (현재 위치는 화면 아래 1/3, y=420). 그러니 내 위치도, 보는 방향도, 목적지도
+       아닌 밝은 점이 시야 한복판에 박혀 있던 것이다.
+       20° 시야에서 정중앙은 가장 아까운 자리다. -->
+
+  <!-- 턴 안내 (상단) -->
+  <div class="turn-banner" id="turn-banner">
+    <div class="turn-arrow-box" id="turn-arrow">↑</div>
+    <div class="turn-info">
+      <div class="turn-dist" id="turn-dist">--</div>
+      <div class="turn-text"><span class="marquee" id="turn-text">--</span></div>
+    </div>
+  </div>
+
+  <!-- 하단 정보 카드 -->
+  <div class="nav-card">
+    <div class="nav-card-dest" id="nav-dest-name"></div>
+    <div class="nav-card-row">
+      <span style="font-size:13px">🚶</span>
+      <div class="nav-stat">
+        <span class="stat-val" id="nav-eta">--</span>
+        <span class="stat-label">분</span>
+      </div>
+      <div class="nav-divider"></div>
+      <div class="nav-stat">
+        <span class="stat-val" id="nav-dist">--</span>
+        <span class="stat-label">km</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       상태 줄 — 한 자리, 한 문장
+       ══════════════════════════════════════════
+       ★★ 왜 합쳤나 (실측 화면에서 드러난 문제)
+
+         위치 안 잡힘              ← 회전 안내 자리에 밀어 넣음
+         ⚠ 오프라인 - 캐시 경로 사용 중  ← 그 위에 겹침
+         경로 계산 중...            ← 또 그 위에 겹침
+
+       세 개가 서로를 가려 하나도 못 읽었다. 게다가 **셋 다 동시에 참일 수 없다** —
+       위치를 못 잡았는데 경로를 계산 중이고 동시에 캐시를 쓰고 있을 수는 없다.
+       배치가 아니라 **상태가 꼬인 것**이었다.
+
+       ★ 그래서 상태를 내보내는 창구를 하나로 만든다.
+         셋을 각자 띄우게 두면 언젠가 또 겹친다. 자리를 옮기는 건 증상만 가린다.
+       ※ 오류 글을 '남은 거리' 칸(46px)에 밀어 넣지 않는다. 그래서 넘쳤다.
+         숫자 칸에는 숫자만 넣는다. -->
+  <div id="nav-status" class="nav-status hidden"></div>
+
+  <!-- 뒤로 (Escape 키로도 동작, 버튼은 최소화) -->
+  <button class="back-btn focusable" id="back-btn">✕</button>
+
+
+  <!-- 로딩 -->
+  <!-- ★ hidden 을 명시한다. 전에는 startNav 의 showLoading→hideLoading 이
+       결과적으로 가려주고 있었을 뿐이다. 그 호출을 상태 줄로 옮겼으므로
+       여기에 hidden 이 없으면 검은 덮개가 안내 화면을 영원히 덮는다. -->
+  <div class="loading-overlay hidden" id="loading-overlay">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loading-text">경로 계산 중...</div>
+  </div>
+</div>
+
+  <!-- ══════════════════════════════════════════
+       지울지 묻는 창 — **모든 화면 바깥**에 둔다
+       ══════════════════════════════════════════
+       ★★ 처음엔 이걸 안내 화면(screen-nav) 안에 넣었다. 그 화면은 홈에서
+         display:none 이라 **팝업이 보이지 않았다.** 그런데 코드상으로는 열린
+         상태라, 키 처리가 "팝업이 떠 있으니 뒤 화면은 무시" 하면서 ↑↓ 를 다 삼켰다.
+         → 즐겨찾기를 담고 나면 커서가 안 움직이는 것처럼 보였다.
+       ※ 화면 위에 겹쳐 뜨는 것은 어느 화면에도 속하면 안 된다. -->
+  <div class="confirm-back hidden" id="confirm-back">
+    <div class="confirm-box">
+      <div class="confirm-msg" id="confirm-msg"></div>
+      <div class="confirm-btns">
+        <button class="confirm-btn" id="confirm-no">취소</button>
+        <button class="confirm-btn danger" id="confirm-yes">지우기</button>
+      </div>
+      <div class="confirm-hint">← → 이동 · Enter 선택</div>
+    </div>
+  </div>
+
+
+<script>
+  // ※ 카카오 키는 더 이상 쓰지 않는다 (검색을 워커로 옮김)
+  const MAPBOX_TOKEN = 'pk.eyJ1IjoibWFqYWVuZyIsImEiOiJjbXNlNTk5eWwwNWgyMnhzOGUxdG5vM3RoIn0.AqqL86GG17pLS0MaSkN4ig';
+  // 국내 도보 경로 (SK TMAP)
+  const TMAP_KEY = 'XKa6vUNY752zXMhjUt3iA53CwCaXU8S73lMXAiZj';
+
+  // 폰에서 보낸 목적지를 받아오는 릴레이
+  const DEST_RELAY = 'https://dest-relay.majaeng.workers.dev';
+
+  const TENCENT_KEY = 'VHLBZ-H7XCB-ZKJUJ-NDVGG-6C4OH-FDFOX';
+
+  // 중국 영역 판단 (한국/일본 제외)
+  function isInChina(lat, lng) {
+    // 한국 명시적 제외
+    if (lat >= 33 && lat <= 38.7 && lng >= 124 && lng <= 132) return false;
+    // 일본 명시적 제외
+    if (lat >= 24 && lat <= 46 && lng >= 129 && lng <= 146) return false;
+    // 대만 제외
+    if (lat >= 21 && lat <= 26 && lng >= 119 && lng <= 123) return false;
+    return lat >= 18 && lat <= 53 && lng >= 73 && lng <= 135;
+  }
+  function currentCountry() {
+    return (currentPos && isInChina(currentPos.lat, currentPos.lng)) ? 'cn' : 'kr';
+  }
+
+  //  ══════════════════════════════════════════
+  //   코드에 박아둔 목록을 없앴다
+  //  ══════════════════════════════════════════
+  //  ★ "담은 적 없는 게 왜 즐겨찾기에 있냐" — 맞는 말이었다.
+  //    강남역·天安门广场 같은 건 내가 고른 것이 아니다.
+  //    지울 수도 없어서 자리만 차지했다.
+  //  ★ 대신 **처음 한 번만** 청두 두 곳을 즐겨찾기에 넣어준다.
+  //    넣어준 뒤로는 보통 즐겨찾기와 똑같다 — 지울 수도, 순서를 바꿀 수도 있다.
+  //    ※ 지울 수 없는 것을 남겨두지 않는다. 내 목록은 내 것이어야 한다.
+  const SEED = [
+    { name: '吉瑞二路188号 B座 11층', addr: '成都市高新区 · 사무실', lat: 30.560576, lng: 104.059147, icon: '🏢' },
+    { name: '吉瑞二路188号 1栋 1단원', addr: '成都市高新区 · 숙소',  lat: 30.560576, lng: 104.059147, icon: '🏠' },
+  ];
+  function seedFavsOnce() {
+    try {
+      if (localStorage.getItem('ko_navi_seeded')) return;
+      localStorage.setItem('ko_navi_seeded', '1');
+      if (loadFavs().length) return;          // 이미 담은 게 있으면 손대지 않는다
+      saveFavs(SEED.slice());
+    } catch (e) {}
+  }
+
+
+  let currentPos = null;
+  let currentHeading = null;      // GPS 진행 방향 (멈추면 null)
+  let compassHeading = null;      // ★ 안경 나침반 — 머리가 향한 방향
+  let headingSrc = '';            // 어디서 온 값인가 (wk / abs / rel / gps)
+  let lastCompassAt = 0;
+  let lastGpsHeadingAt = 0;
+
+  // ★ 내 위치만 있고 방향이 없으면 '어느 쪽으로 첫걸음을 떼야 하는지' 를 모른다.
+  //   GPS heading 은 걷는 중에만, 그것도 부정확하게 나온다.
+  //   안경은 머리에 있으므로 나침반이 곧 '내가 보고 있는 방향' 이다.
+  //   (문서: DeviceOrientationEvent 지원, 권한 필요)
+  let compassAttached = false;    // 리스너가 실제로 붙었는가
+  function startCompass() {
+    // ★ 여기서 두 번 데였다.
+    //   ① 페이지 열릴 때 자동으로 권한을 요청했는데, 문서에 "사용자 조작에서만
+    //      부를 수 있다" 고 되어 있어 무시됐다.
+    //   ② 그래서 첫 조작 때 다시 부르게 했는데, '시작했다' 표시를 미리 켜둬서
+    //      두 번째 호출이 그냥 돌아갔다. 결국 방향이 영영 안 붙었다.
+    //   그래서 '리스너가 실제로 붙었을 때만' 표시를 켠다.
+    //   실패하면 다음 조작에서 다시 시도한다.
+    if (compassAttached) return;
+
+    const onOrient = e => {
+      let h = null, src = '';
+      if (typeof e.webkitCompassHeading === 'number' && isFinite(e.webkitCompassHeading)) {
+        h = e.webkitCompassHeading; src = 'wk';
+      } else if (e.alpha != null && isFinite(e.alpha)) {
+        // 규격상 alpha 는 반시계지만 이 안경은 시계 방향으로 준다. 그대로 쓴다.
+        h = ((e.alpha % 360) + 360) % 360; src = e.absolute ? 'abs' : 'rel';
+      }
+      if (h != null) { compassHeading = h; headingSrc = src; lastCompassAt = Date.now(); }
+    };
+
+    const attach = () => {
+      if (compassAttached) return;
+      compassAttached = true;
+      window.addEventListener('deviceorientation', onOrient);
+      // 북쪽 기준 값을 따로 주는 기기가 있다 — 있으면 그쪽이 더 정확하다
+      window.addEventListener('deviceorientationabsolute', onOrient);
+    };
+
+    try {
+      if (typeof DeviceOrientationEvent !== 'undefined'
+          && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission()
+          .then(st => { if (st === 'granted') attach(); })   // 거부되면 표시를 안 켠다
+          .catch(() => {});                                  // → 다음 조작에서 재시도
+      } else {
+        attach();
+      }
+    } catch (e) {}
+  }
+
+  /// 지금 쓸 방향 (나침반 우선, 없으면 GPS)
+  function facingDeg() {
+    const now = Date.now();
+    // 나침반은 계속 들어온다. 3초 넘게 안 오면 죽은 값이다.
+    if (compassHeading != null && now - lastCompassAt < 3000) return compassHeading;
+    // ★ GPS 방향은 걸을 때만 나온다. 멈춘 뒤에도 계속 쓰면 방향이 굳는다.
+    //   (실측: 제자리에서 돌아도 부채꼴이 안 돌았다 — 이 값이 남아 있어서였다)
+    if (currentHeading != null && now - lastGpsHeadingAt < 5000) return currentHeading;
+    return null;
+  }
+  let focusIndex = 0;
+  let homeFocusables = [];
+  let watchId = null;
+  let routeSteps = [];
+  let routeCoords = [];
+  let currentStepIndex = 0;
+  let selectedDest = null;
+  let searchResults = [];
+  let searchFocusIndex = 0;
+  let isOffline = false;
+  let navProfile = 'foot'; // 'foot' | 'driving'
+  let pulsePhase = 0;
+  let animFrame = null;
+  const POS_X = 300, POS_Y = 420;
+
+  // ── 최근 목적지 ──
+  function loadRecentDests() {
+    try { return JSON.parse(localStorage.getItem('ko_navi_recent') || '[]'); } catch { return []; }
+  }
+  //  ══════════════════════════════════════════
+  //   즐겨찾기 — 내가 담고 내가 지운다
+  //  ══════════════════════════════════════════
+  //  ★ 전에는 '즐겨찾기' 가 코드에 박힌 고정 목록이었다. 손댈 수가 없었다.
+  //    최근 목적지는 자동으로 쌓이지만 5개뿐이고 밀려난다 —
+  //    넉 달 머무는 곳의 숙소·사무실이 밀려나면 곤란하다.
+  //  ★ 담은 것은 맨 위에, 기본 목록은 그 아래에 둔다. 담은 게 없으면 예전과 같다.
+  function loadFavs() {
+    try { return JSON.parse(localStorage.getItem('ko_navi_favs') || '[]'); } catch { return []; }
+  }
+  function saveFavs(list) {
+    try { localStorage.setItem('ko_navi_favs', JSON.stringify(list)); } catch {}
+  }
+  //  ★ 담은 곳이 어느 나라인지는 **목적지 좌표**로 정한다.
+  //    내가 지금 어디 있느냐가 아니라 그곳이 어디냐가 기준이다.
+  //    (한국에서 청두 숙소를 미리 담아둘 수 있어야 한다)
+  //  ※ isInChina 가 이미 있다. 새 규칙을 만들지 않는다.
+  function favCountry(d) { return isInChina(d.lat, d.lng) ? 'cn' : 'kr'; }
+
+  //  ★ 지금 보고 있는 즐겨찾기 탭. **있는 곳과 별개**다.
+  //    청두에 있어도 서울 목록을 봐야 할 때가 있다 (다음 출장, 돌아갈 집).
+  //    ※ 처음 열 때만 있는 나라로 맞추고, 그 뒤로는 고른 쪽을 지킨다.
+  //      화면을 다시 그릴 때마다 되돌아가면 "눌렀는데 안 먹네" 가 된다.
+  let favTab = null;
+  function favsOf(c) { return loadFavs().filter(f => favCountry(f) === c); }
+  function isFav(d) {
+    return loadFavs().some(f => f.name === d.name);
+  }
+  //  ★ 한도는 **나라마다 따로** 센다.
+  //    합쳐서 세면 청두에서 많이 담는 사이 한국 즐겨찾기가 밀려난다 —
+  //    돌아와서 보면 없어져 있는 셈이라 곤란하다.
+  //  ※ 넉 달 머무는 곳이면 숙소·사무실·식당·병원이 금방 쌓인다.
+  //    저장 공간은 문제가 안 되니 넉넉히 둔다.
+  const FAV_MAX = 30;
+  function addFav(d) {
+    const item = { name: d.name, addr: d.addr || '', lat: d.lat, lng: d.lng, icon: '★' };
+    const rest = loadFavs().filter(f => f.name !== d.name);
+    const mine = favCountry(item);
+    const same = [item, ...rest.filter(f => favCountry(f) === mine)].slice(0, FAV_MAX);
+    const other = rest.filter(f => favCountry(f) !== mine);
+    //  담은 순서를 지키려고 원래 자리대로 다시 엮는다
+    saveFavs([...same, ...other]);
+  }
+  function removeFav(name) {
+    saveFavs(loadFavs().filter(f => f.name !== name));
+  }
+
+  //  ★ 최근 목적지도 지울 수 있어야 한다. 잘못 찍은 곳이 계속 남아 있으면
+  //    정작 필요한 게 밀려난다.
+  function removeRecent(name) {
+    try {
+      const list = loadRecentDests().filter(d => d.name !== name);
+      localStorage.setItem('ko_navi_recent', JSON.stringify(list));
+    } catch (e) {}
+  }
+
+  function saveRecentDest(dest) {
+    let list = loadRecentDests().filter(d => d.name !== dest.name);
+    list.unshift({ name: dest.name, addr: dest.addr, lat: dest.lat, lng: dest.lng, icon: '🕐' });
+    if (list.length > 5) list = list.slice(0, 5);
+    try { localStorage.setItem('ko_navi_recent', JSON.stringify(list)); } catch {}
+  }
+
+  // ── 오프라인 캐시 ──
+  function cacheRoute(dest, coords, steps) {
+    try {
+      localStorage.setItem('ko_navi_cache', JSON.stringify({ dest, coords, steps, ts: Date.now() }));
+    } catch {}
+  }
+  function loadCachedRoute() {
+    try { return JSON.parse(localStorage.getItem('ko_navi_cache') || 'null'); } catch { return null; }
+  }
+  //  ══════════════════════════════════════════
+  //   안내 화면의 상태 — 한 번에 하나만
+  //  ══════════════════════════════════════════
+  //  ★ 세 가지가 동시에 참일 수 없으므로 **우선순위로 하나만 고른다.**
+  //    위가 더 급한 것이다.
+  //      ① 위치를 못 잡음   — 이게 아니면 나머지가 다 무의미하다
+  //      ② 경로를 못 받음   — 영영 '계산 중' 으로 남는 게 가장 나빴다
+  //      ③ 경로 계산 중
+  //      ④ 캐시(오프라인) 경로로 안내 중
+  //      ⑤ 정상 — 회전 안내를 보여준다
+  //  ※ 상태가 있으면 회전 안내를 **숨긴다.** 둘이 같이 뜨면 또 겹친다.
+  let navFlags = { gpsLost: false, routeLoading: false, routeFailed: false, offline: false };
+
+  function renderNavStatus() {
+    const el = document.getElementById('nav-status');
+    const banner = document.getElementById('turn-banner');
+    if (!el || !banner) return;
+    let msg = '';
+    if (navFlags.gpsLost)           msg = '위치 안 잡힘 — 하늘이 보이는 곳으로';
+    else if (navFlags.routeFailed)  msg = '경로를 못 받았습니다';
+    else if (navFlags.routeLoading) msg = '경로 계산 중…';
+    else if (navFlags.offline)      msg = '저장해둔 경로로 안내 중';
+    if (msg) {
+      el.textContent = msg;
+      el.classList.remove('hidden');
+      banner.style.visibility = 'hidden';
+    } else {
+      el.classList.add('hidden');
+      banner.style.visibility = 'visible';
+    }
+  }
+  function setNavFlag(k, v) {
+    if (navFlags[k] === v) return;
+    navFlags[k] = v;
+    renderNavStatus();
+  }
+  function setOffline(v) {
+    isOffline = v;
+    setNavFlag('offline', v);
+  }
+
+  const canvas = document.getElementById('ar-canvas');
+  const ctx = canvas.getContext('2d');
+
+  let voiceOn = true;               // 음성 안내 on/off
+  let spokenDistBucket = null;      // 현재 스텝에서 안내한 거리 구간
+  let isRerouting = false;          // 재경로 계산 중 플래그
+  let mapView = { centerLat: 0, centerLng: 0, zoom: 16, pitch: 0 };
+  let pitchTarget = 0;              // 0 = 탑뷰, 1 = 쿼터뷰
+  let zoomTarget = 16;              // ★ 줌을 목표값으로 두고 매 프레임 다가간다
+                                    //   (정수로 한 번에 뛰면 화면이 튄다)
+  const PITCH_K = 0.0022;           // 원근 압축 강도
+  const ZOOM_MIN = 13, ZOOM_MAX = 19;
+  const TILE_SIZE = 256;
+  //  ★ 이 높이보다 위는 도로를 안 그린다 (기울이기로 뭉개지는 띠).
+  //    경로선·목적지 표시는 여기 걸리지 않는다 — 그건 끝까지 보여야 한다.
+  const ROAD_TOP_CUT = 130;
+
+  //  ══════════════════════════════════════════
+  //   칼라 지도 (Mapbox 다크 타일)
+  //  ══════════════════════════════════════════
+  //  ★★ 왜 다크인가 — 색을 뺀 게 아니다
+  //    다크 스타일도 칼라 지도다. 도로는 노랑·주황, 물은 파랑, 공원은 초록.
+  //    **배경만 어둡다.**
+  //    안경은 더하기 화면이라 검정을 못 그린다. 주간 지도(배경 흰색)를 올리면
+  //    시야 20° 전체가 최대 밝기로 빛나는 흰 판이 된다 — 그 너머 실제 도로가
+  //    안 보인다. 운전 중이면 위험하다.
+  //    즉 밝은 배경은 '색' 문제가 아니라 **앞이 안 보이는** 문제다.
+  //
+  //  ★ 배경을 빼는 처리
+  //    dark-v11 배경은 순검정이 아니라 짙은 회색이다. 그대로 올리면
+  //    옅은 회색 판이 시야에 깔린다.
+  //    그래서 타일마다 **가장 흔한 색(=배경)을 찾아 빼고**, 남은 색을 키운다.
+  //    배경은 검정(=투명)이 되고 도로·글자만 색으로 남는다.
+  //    ※ 타일당 한 번만 하고 결과를 담아둔다. 매 프레임 도는 일이 아니다.
+  //
+  //  ★ 되돌릴 길
+  //    아래를 false 로 두면 예전 흰 벡터 선으로 즉시 돌아간다.
+  //    **잘 돌던 길을 지우지 않는다.** 새 길이 나쁘면 한 줄로 되돌린다.
+  const USE_RASTER = true;
+
+  //  기울이기(원근)를 이미지에 적용하려면 평평한 판에 먼저 그린 뒤
+  //  가로줄 단위로 옮겨 그려야 한다. 그 평평한 판.
+  //  ※ proj() 는 x 를 POS_X 기준으로 배율만 바꾸고 y 를 다시 매긴다 —
+  //    즉 **가로줄은 가로줄로 간다.** 그래서 줄 단위 복사로 정확히 맞는다.
+  //    (기울이기와 이미지를 따로 놀게 두면 경로선이 도로 위에 안 얹힌다.
+  //     그건 이 화면에서 가장 나쁜 고장이다.)
+  //  ★ 앞뒤로 얼마나 담을지 계산해서 정한다. 눈대중으로 잡았다가
+  //    화면 아래가 통째로 비었다 (아래 FLAT_NEAR 주석 참고).
+  //    기울기를 최대로 줬을 때도 화면 600px 이 다 덮이는지 따져서 잡은 값이다.
+  const FLAT_W = 1000, FLAT_H = 1180;     // 평평한 판 크기
+  const FLAT_OX = 200,  FLAT_OY = 520;    // 평평한 좌표 → 판 좌표 오프셋
+  const FLAT_HW = 340;                    // 옮겨 그릴 가로 반폭
+  const FLAT_FAR = 900;                   // 앞으로 얼마나 멀리까지 (평평한 픽셀)
+  //  ★★ 이걸 빠뜨려서 **내 위치 아래(=뒤편) 화면이 통째로 안 그려졌다.**
+  //    가로줄 반복문을 POS_Y 에서 시작해 앞으로만 돌렸다.
+  //    현재 위치는 화면 아래 1/3(y=420)에 있으므로 그 아래 180px 이
+  //    영영 비어 있었다 — "어떤 줌에서든 아랫부분이 잘린다" 가 이것이다.
+  //  ※ 기준점에서 한쪽으로만 도는 반복문은 반대쪽을 잊기 쉽다.
+  //    화면을 채우는 코드는 **화면 끝에서 끝까지** 도는지부터 본다.
+  const FLAT_NEAR = 180;                  // 뒤로 얼마나 (POS_Y 아래)
+  let flatCv = null, flatCtx = null;
+
+  const rasterCache = {};     // key → 처리 끝난 캔버스
+  const rasterLoading = new Set();
+  const RASTER_MAX = 14;   // 화면에 쓰는 9장 + 여유 (한 장이 4배 커졌다)      // 이만큼 넘으면 오래된 것부터 버린다
+  //  ★★ 전에는 '담긴 타일 개수' 로 다시 그릴지 판단했다.
+  //    그런데 하나를 버리면서 하나가 들어오면 **개수가 그대로**다 —
+  //    새 타일이 왔는데도 갱신을 건너뛴다. 줌을 바꿨을 때 지도가 안 바뀌던
+  //    이유 중 하나가 이것이다.
+  //  ★ 개수가 아니라 **바뀐 횟수**를 센다. 같은 수로 돌아올 일이 없다.
+  let rasterVersion = 0;
+  //  타일이 마지막으로 화면에 쓰인 시각(순번). 버릴 때 기준이 된다.
+  const rasterUsedAt = {};
+  let rasterClock = 0;
+
+  //  ★ 타일에서 배경색을 찾아 뺀다.
+  //    '가장 흔한 색' 을 배경으로 본다 — 지도 타일은 대부분이 배경이다.
+  //  ※ 512 로 그릴 것이므로 512 로 받아 512 로 처리한다.
+  //    256 을 두 배로 늘려 그리면 그만큼 뭉개진다 — 굳이 흐리게 만들 이유가 없다.
+  function stripBackground(img) {
+    const cv = document.createElement('canvas');
+    cv.width = RPX; cv.height = RPX;
+    const c = cv.getContext('2d', { willReadFrequently: true });
+    c.drawImage(img, 0, 0, RPX, RPX);
+    let d;
+    try { d = c.getImageData(0, 0, RPX, RPX); }
+    catch (e) { return cv; }        // 다른 출처라 못 읽으면 원본 그대로 쓴다
+    const px = d.data;
+
+    //  ══════════════════════════════════════════
+    //   ★★ 타일마다 밝기를 따로 계산하던 것을 없앴다
+    //  ══════════════════════════════════════════
+    //   전에는 타일마다 '가장 흔한 색' 과 '가장 밝은 곳' 을 찾아 배율을 정했다.
+    //   그러면 **옆 타일과 다른 배율**이 걸린다 —
+    //   같은 도로인데 타일 경계에서 밝기가 달라진다.
+    //   "색이 일관성 없이 띄엄띄엄 든다" 의 나머지 절반이 이것이었다.
+    //
+    //   ★ 실측하니 dark-v11 배경은 **강남·청두 모두 RGB(42,42,42)** 로 같았다.
+    //     스타일이 정한 고정색이니 타일마다 찾을 이유가 없다.
+    //     모든 타일에 **같은 곡선**을 먹인다. 그래야 이어 붙었을 때 같아 보인다.
+    //   ※ 손잡이를 없앤다. 타일별로 달라질 수 있는 여지 자체를 지운다.
+    //  ★★ 검은 점을 42 로 잡았던 것이 "지도가 흐리다" 의 진짜 원인이었다.
+    //    dark-v11 타일의 밝기 분포를 실제로 세어보니:
+    //        밝기 52 → 73.4%   배경·건물 채움
+    //        밝기 76 → 11.5%   도로
+    //        밝기 96 이상 → 2.6%  글자
+    //    42 를 검은 점으로 잡으면 배경(52)이 **72 로 되살아난다.**
+    //    화면의 73% 가 뿌옇게 빛나고 그 위에 도로가 묻힌다.
+    //    → 도로가 어두운 게 아니라 **배경이 안 죽은** 것이었다.
+    //
+    //  ★ 검은 점을 배경 **바로 위**(56)로 올린다. 배경은 완전히 검정이 되고
+    //    도로(76)와 글자(96+)만 남는다.
+    //    실측: 화면에서 빛나는 넓이가 91% → 19% 로 줄었다.
+    //  ※ 어둡다고 느껴지면 밝기를 올릴 게 아니라 **무엇이 빛나고 있는지** 를 본다.
+    //    더하기 화면에서 배경이 빛나면 그 위의 모든 것이 묻힌다.
+    const BG = 56;          // 배경(52) 바로 위 — 여기 아래는 전부 검정
+    const TOP = 90;         // 도로(76)가 확실히 밝게 나오도록
+    const GAMMA = 0.75;
+    if (!stripBackground.lut) {
+      const lut = new Uint8Array(256);
+      for (let v = 0; v < 256; v++) {
+        const t = Math.max(0, Math.min(1, (v - BG) / (TOP - BG)));
+        lut[v] = Math.round(255 * Math.pow(t, GAMMA));
+      }
+      stripBackground.lut = lut;
+    }
+    const lut = stripBackground.lut;
+
+    //  밝기만 키우고 색비는 지킨다 (채널마다 따로 키우면 색이 뒤틀린다)
+    for (let i = 0; i < px.length; i += 4) {
+      const lum = (px[i] * 3 + px[i + 1] * 6 + px[i + 2]) >> 3;
+      const want = lut[lum > 255 ? 255 : lum];
+      if (want === 0) { px[i] = px[i + 1] = px[i + 2] = 0; continue; }
+      const k = want / Math.max(1, lum);
+      for (let c2 = 0; c2 < 3; c2++) {
+        const v = px[i + c2] * k;
+        px[i + c2] = v > 255 ? 255 : v;
+      }
+    }
+    c.putImageData(d, 0, 0);
+    return cv;
+  }
+
+  //  ★★ "지도 글자가 작다" — 맞다. 256px 타일을 600px 화면에 그대로 깔면
+  //    Mapbox 가 그린 글자는 이 화면(42 PPD, 20°)에서 손톱보다 작다.
+  //  ★ 그래서 **한 단계 낮은 줌의 타일을 두 배 크기로** 그린다.
+  //    z-1 타일은 두 배 넓은 땅을 담으므로, 두 배로 늘리면 축척은 그대로다.
+  //    대신 글자와 선이 **두 배로 굵고 커진다.** 담기는 정보도 한 단계
+  //    걸러져서(작은 길·잔글씨가 빠짐) 화면이 오히려 정돈된다.
+  //  ※ 화질은 조금 무뎌진다. 이 화면에서는 선명함보다 **읽히는 것**이 먼저다.
+  //  ══════════════════════════════════════════
+  //   ★★ 한 장이 더 넓은 땅을 담게 한다 — 요청 수를 줄이려고
+  //  ══════════════════════════════════════════
+  //   실측: 25장을 한꺼번에 받으면 **전부 도착까지 4.5초** (중앙값 2.4초).
+  //   WebP 로 크기를 6분의 1로 줄여봤지만 **차이가 없었다** (4508 vs 3898ms).
+  //   → 병목은 바이트가 아니라 **요청 하나하나의 왕복·서버 렌더 시간**이다.
+  //     그러면 줄일 것은 크기가 아니라 **개수**다.
+  //
+  //   Mapbox 는 512 크기 타일도 준다. `tiles/512/{z}/…@2x` 는 1024×1024 로 오고,
+  //   z 를 두 단계 낮추면 **픽셀 밀도가 지금과 똑같다** (0.475 m/px).
+  //     지금  : 256타일 z17 @2x → 512px 가 243m   (25장 필요)
+  //     바꿈  : 512타일 z16 @2x → 1024px 가 486m  ( 9장 필요)
+  //   한 장이 네 장을 대신한다.
+  //
+  //   ※ 픽셀 처리량은 조금 늘어난다(6.5M → 9.4M). 그래도 그건 0.5초 안쪽이고
+  //     네트워크는 4.5초였다. 큰 쪽을 줄인다.
+  const RZ_DROP = 2;                       // 몇 단계 낮춰 받을지
+  const RTILE = TILE_SIZE << RZ_DROP;      // 그릴 때의 크기 (1024)
+  //  ★ 받은 그림 크기 = 그릴 크기. 늘려 그리지 않으니 뭉개지지 않는다.
+  //  ※ 이 줄은 RTILE **뒤에** 있어야 한다. 앞에 두면 실행하는 순간 죽는다
+  //    (const 는 선언 전에 못 쓴다). 문법 검사로는 안 잡히는 종류다.
+  const RPX = RTILE;
+
+  function loadRasterTile(z, tx, ty) {
+    const key = `${z}/${tx}/${ty}`;
+    if (key in rasterCache || rasterLoading.has(key)) return;
+    rasterLoading.add(key);
+    const img = new Image();
+    img.crossOrigin = 'anonymous';     // 픽셀을 읽어야 배경을 뺄 수 있다
+    img.onload = () => {
+      rasterCache[key] = stripBackground(img);
+      rasterUsedAt[key] = ++rasterClock;
+      rasterLoading.delete(key);
+      rasterVersion++;
+      //  ★★ 전에는 **먼저 들어온 것**을 버렸다. 그런데 먼저 들어온 건
+      //    대개 지금 보고 있는 타일이다 — 보고 있는 걸 버리고 다시 받는 꼴이었다.
+      //    (그래서 있던 길이 사라졌다 다시 생기기도 한다)
+      //  ★ '가장 오래 안 쓴 것' 을 버린다. 지금 화면에 쓰이는 건 살아남는다.
+      const keys = Object.keys(rasterCache);
+      if (keys.length > RASTER_MAX) {
+        let oldest = null, oldT = Infinity;
+        for (const k of keys) {
+          const t = rasterUsedAt[k] || 0;
+          if (t < oldT) { oldT = t; oldest = k; }
+        }
+        if (oldest) { delete rasterCache[oldest]; delete rasterUsedAt[oldest]; }
+      }
+    };
+    //  ══════════════════════════════════════════
+    //   ★★ 스타일을 두 번 갈아탔다. 왜인지 남긴다 — 두 번 다 내 잘못이다.
+    //  ══════════════════════════════════════════
+    //   ① dark-v11 → navigation-night-v1 로 바꿨다.
+    //      "dark-v11 은 배경을 빼면 남는 게 2뿐" 이라는 실측을 근거로 삼았다.
+    //      그런데 그 타일은 **만주 벌판 한복판**, 아무것도 없는 곳이었다.
+    //      빈 타일을 재놓고 스타일 탓을 했다.
+    //
+    //   ② navigation-night-v1 은 traffic 레이어가 **15개** 다 (스타일 정의 확인).
+    //      실시간 정체를 도로 옆에 빨강·노랑으로 덧그린다.
+    //      그런데 그 데이터는 **모든 도로에 있지 않다.** 있는 구간만 칠해진다.
+    //      → 도로 몇 군데만 띄엄띄엄 색이 드는 얼룩이 된다.
+    //      걷기 모드에서는 아예 쓸모도 없다.
+    //
+    //   ★ 강남 도심으로 다시 재니 결과가 뒤집혔다:
+    //        navigation-night-v1  중간톤 10.5% · 진한 색 12.3% (= 교통 얼룩)
+    //        dark-v11             중간톤 18.1% · 진한 색  0.0%
+    //      dark-v11 이 **지도 내용은 가장 많고 얼룩은 없다.**
+    //
+    //   ※ 배운 것: 지도 데이터를 잴 때는 **쓸 곳에서** 재야 한다.
+    //     빈 타일 하나로 두 번 헛돌았다.
+    //
+    //   ※ 색은 지도에 맡기지 않는다. 지도는 회색 맥락이고,
+    //     **색은 우리 것에만 쓴다** — 초록=경로, 노랑=접근, 빨강=목적지.
+    //     그러면 화면에 색이 보이면 그건 전부 '내가 알아야 할 것' 이다.
+    //  ══════════════════════════════════════════
+    //   ★ WebP 로 받는다 — 같은 그림, 6분의 1 크기
+    //  ══════════════════════════════════════════
+    //   실측 (강남 z17 타일 하나):
+    //       PNG  @2x   67 KB
+    //       WebP @2x   11 KB      ← 같은 512×512
+    //   화면 25장이면 1.7MB → 275KB 다.
+    //
+    //   손실 압축이라 걱정했는데, 우리 밝기 처리를 거친 뒤로 재보니
+    //       밝은 픽셀 비율  PNG 21.2% · WebP 21.5%
+    //       평균 차이       3.9 / 255
+    //       40 넘게 다른 곳  2.29% (얇은 선 가장자리뿐)
+    //   눈으로 구분할 수준이 아니다.
+    //
+    //   ※ 안경 브라우저가 WebP 를 못 읽을 경우를 대비해 PNG 로 한 번 물러선다.
+    //     새 형식을 쓸 때는 물러설 길을 같이 둔다.
+    img.onerror = () => {
+      if (img.dataset.retried) { rasterLoading.delete(key); return; }
+      img.dataset.retried = '1';
+      img.src = `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/512/${z}/${tx}/${ty}@2x`
+              + `?access_token=${MAPBOX_TOKEN}`;
+    };
+    img.src = `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/512/${z}/${tx}/${ty}@2x.webp`
+            + `?access_token=${MAPBOX_TOKEN}`;
+  }
+
+  //  ★ 평평한 판을 매 프레임 다시 만들면 무겁다 (타일 49장 × 60fps).
+  //    지도가 실제로 움직였을 때만 다시 만든다. 안 움직이면 있던 걸 쓴다.
+  //  ※ 발열로 밝기가 떨어지면 오늘 한 가시성 작업이 전부 헛것이 된다.
+  let flatKey = '';
+  //  ══════════════════════════════════════════
+  //   ★ 아직 안 온 타일은 이웃 줌으로 메운다
+  //  ══════════════════════════════════════════
+  //   줌을 바꾸면 그 줌의 타일을 새로 받아야 한다. 받는 동안 그 자리를
+  //   비워두면 **지도가 중간에 잘려** 보인다.
+  //   ※ 비어 있는 것보다 '조금 거친 지도' 가 낫다. 잘린 지도는 고장으로 보인다.
+  //
+  //   위쪽 줌(부모)이 있으면 그 일부를 늘려 쓰고,
+  //   아래쪽 줌(자식)이 있으면 네 조각을 줄여 쓴다.
+  //   둘 다 이미 담아둔 것이라 새로 받을 필요가 없다 — 그래서 즉시 그려진다.
+  function drawTileOrNear(f, z, tx, ty, dx, dy) {
+    const ek = `${z}/${tx}/${ty}`;
+    const exact = rasterCache[ek];
+    if (exact) { rasterUsedAt[ek] = ++rasterClock; f.drawImage(exact, dx, dy, RTILE, RTILE); return; }
+    loadRasterTile(z, tx, ty);
+
+    // 부모(더 넓게 찍힌 타일)의 해당 부분을 늘려 쓴다
+    for (let L = 1; L <= 3; L++) {
+      const pz = z - L, ptx = tx >> L, pty = ty >> L;
+      const pk = `${pz}/${ptx}/${pty}`;
+      const par = rasterCache[pk];
+      if (!par) continue;
+      rasterUsedAt[pk] = ++rasterClock;
+      const n = 1 << L;                          // 부모 한 장이 담은 자식 수(한 변)
+      const sw = RPX / n;
+      const sx = (tx - (ptx << L)) * sw;
+      const sy = (ty - (pty << L)) * sw;
+      f.drawImage(par, sx, sy, sw, sw, dx, dy, RTILE, RTILE);
+      return;
+    }
+
+    // 자식(더 좁게 찍힌 타일) 네 조각을 줄여 쓴다
+    const half = RTILE / 2;
+    let drew = false;
+    for (let i = 0; i < 2; i++) {
+      for (let j = 0; j < 2; j++) {
+        const ck = `${z + 1}/${tx * 2 + i}/${ty * 2 + j}`;
+        const ch = rasterCache[ck];
+        if (!ch) continue;
+        rasterUsedAt[ck] = ++rasterClock;
+        f.drawImage(ch, dx + i * half, dy + j * half, half, half);
+        drew = true;
+      }
+    }
+    return drew;
+  }
+
+  //  ══════════════════════════════════════════
+  //   도로의 진짜 폭 — 경로 주변 도로의 가장자리를 그린다
+  //  ══════════════════════════════════════════
+  //  ★★ "길이 없는 곳에 경로가 그려진다" 의 진짜 답이 여기 있었다.
+  //
+  //    실측 (오토웨이타워→클라이피 715m, 5m 간격 144지점, 선분까지):
+  //        중앙값 10.4m · 90% 16.1m · 최대 17.1m
+  //        가장 가까운 도로: secondary 100 · primary 19
+  //
+  //    이 값들이 **도로 반폭 안에 정확히 들어간다.**
+  //        영동대로(primary)  폭 40m → 반 20m   vs 재본 값 16~17m
+  //        역삼로(secondary)  폭 25m → 반 12.5m vs 재본 값 10~11m
+  //
+  //    즉 경로는 어긋난 게 아니라 **도로 위(가장자리=인도)** 에 있었다.
+  //    지도가 왕복 8차선을 **가느다란 선 하나**로 그려서 밖으로 보였을 뿐이다.
+  //
+  //  ★ 그래서 도로의 **양쪽 가장자리**를 그린다. 그러면 초록 경로가
+  //    그 안쪽에 놓이고, "도로 옆" 이 아니라 "도로 위" 로 읽힌다.
+  //  ※ 폭만큼 칠하지 않는다. 더하기 화면에서 80px 밝은 띠는 시야를 다 먹는다.
+  //    가느다란 선 두 줄이면 경계를 알리는 데 충분하다.
+  //  ※ 칼라 타일은 그대로 둔다. 지도 전체를 벡터로 바꿀 이유가 없다 —
+  //    필요한 건 **경로가 지나는 도로**뿐이고, 그건 벡터 타일 서너 장이면 된다
+  //    (실측 3장 · 95KB · 268ms, 경로당 한 번).
+  //
+  //  ※ 폭은 등급별 **어림값**이다. 실제 폭 데이터는 어디에도 없다.
+  //  ★★ 한 경로로 맞추면 안 된다. 네 경로에서 재보니 이렇게 흩어졌다:
+  //        primary    16.8 / 12.6 /  4.8 m
+  //        secondary  10.4 /  7.4 / 14.3 m
+  //        street      4.6 /  7.1 m
+  //    같은 등급이라도 세종대로와 영동대로의 폭이 같을 리 없다.
+  //    처음 잰 한 경로(오토웨이타워)에 맞췄으면 다른 데서 더 틀렸을 것이다.
+  //    ※ 한 번 잰 값으로 상수를 정하지 않는다.
+  //  ★ 그래서 여러 경로의 가운데 값을 쓴다. primary 기준 평균 오차 8.6m → 4.1m.
+  //    폭 데이터가 없는 한 이 이상은 못 줄인다.
+  //  ※ 경로에 맞춰 폭을 역산하지 않는다. 그러면 **경로를 한 번 더 그리는 것**일 뿐
+  //    도로에 대해서는 아무것도 말하지 않게 된다.
+  const ROAD_HALF_M = {           // 중심선에서 가장자리까지 (m)
+    motorway: 22, trunk: 18, primary: 13, secondary: 11,
+    tertiary: 8, street: 6, street_limited: 6,
+  };
+  let roadEdges = [];             // [{a:{lat,lng}, b:{lat,lng}}] — 이미 밀어낸 선분
+  let edgesFor = '';
+
+  async function buildRoadEdges() {
+    if (!routeCoords.length) { roadEdges = []; return; }
+    const sig = routeCoords.length + '/' + routeCoords[0].lat.toFixed(5);
+    if (sig === edgesFor) return;
+    edgesFor = sig;
+
+    const z = 16, EXTENT = 4096;
+    const keys = new Set();
+    for (const p of routeCoords) {
+      const t = latLngToTilePixel(p.lat, p.lng, z);
+      keys.add(`${Math.floor(t.tx)}/${Math.floor(t.ty)}`);
+      if (keys.size > 8) break;                 // 욕심내지 않는다
+    }
+    await Promise.all([...keys].map(k => {
+      const [x, y] = k.split('/').map(Number);
+      return loadVectorTile(z, x, y);
+    }));
+
+    const K = 111320;
+    const cosLat = Math.cos(routeCoords[0].lat * Math.PI / 180);
+    const toM = (p, o) => ({ x: (p.lng - o.lng) * K * cosLat, y: (p.lat - o.lat) * K });
+    const org = routeCoords[0];
+    const routeM = routeCoords.map(p => toM(p, org));
+
+    //  경로 선분까지의 거리 (m)
+    function distToRoute(px, py) {
+      let best = Infinity;
+      for (let i = 0; i < routeM.length - 1; i++) {
+        const a = routeM[i], b = routeM[i + 1];
+        const bx = b.x - a.x, by = b.y - a.y, L2 = bx * bx + by * by;
+        let t = L2 > 0 ? ((px - a.x) * bx + (py - a.y) * by) / L2 : 0;
+        t = t < 0 ? 0 : (t > 1 ? 1 : t);
+        const d = Math.hypot(px - (a.x + bx * t), py - (a.y + by * t));
+        if (d < best) best = d;
+      }
+      return best;
+    }
+
+    const out = [];
+    for (const key in vtCache) {
+      const [kz, ktx, kty] = key.split('/').map(Number);
+      if (kz !== z) continue;
+      for (const f of vtCache[key]) {
+        const half = ROAD_HALF_M[f.props.class];
+        if (!half) continue;                    // 폭이 뜻있는 도로만
+        for (const ring of f.geom) {
+          for (let i = 0; i < ring.length - 1; i++) {
+            const A = tilePxToLatLng(ktx + ring[i].x / EXTENT, kty + ring[i].y / EXTENT, z);
+            const B = tilePxToLatLng(ktx + ring[i + 1].x / EXTENT, kty + ring[i + 1].y / EXTENT, z);
+            const am = toM(A, org), bm = toM(B, org);
+            //  경로에서 먼 도로는 그리지 않는다 — 화면이 시끄러워질 뿐이다
+            const mx = (am.x + bm.x) / 2, my = (am.y + bm.y) / 2;
+            if (distToRoute(mx, my) > half + 25) continue;
+            const dx = bm.x - am.x, dy = bm.y - am.y;
+            const L = Math.hypot(dx, dy);
+            if (L < 1) continue;
+            const nx = -dy / L * half, ny = dx / L * half;   // 수직 방향으로 반폭만큼
+            for (const sgn of [1, -1]) {
+              out.push({
+                a: { lat: A.lat + sgn * ny / K, lng: A.lng + sgn * nx / (K * cosLat) },
+                b: { lat: B.lat + sgn * ny / K, lng: B.lng + sgn * nx / (K * cosLat) },
+              });
+            }
+          }
+        }
+      }
+    }
+    roadEdges = out;
+  }
+
+  /// 타일 좌표(소수 포함) → 위경도
+  function tilePxToLatLng(tx, ty, z) {
+    const n = 2 ** z;
+    const lng = tx / n * 360 - 180;
+    const m = Math.PI - 2 * Math.PI * ty / n;
+    return { lat: 180 / Math.PI * Math.atan(0.5 * (Math.exp(m) - Math.exp(-m))), lng };
+  }
+
+  //  ══════════════════════════════════════════
+  //   ★ 경로를 따라 타일을 미리 받아둔다
+  //  ══════════════════════════════════════════
+  //   "처음엔 길이 없다가 걸어가니 없던 길이 생긴다" — 타일이 그제야 도착한 것이다.
+  //   화면에 보이는 곳만 받으니, 앞으로 갈 곳은 도착해서야 받기 시작한다.
+  //   ★ 경로를 받는 즉시 그 위의 타일을 미리 받아둔다.
+  //   ※ 한 번만 한다. 매 프레임 도는 일이 아니다.
+  let prefetchedFor = '';
+  function prefetchRouteTiles() {
+    if (!routeCoords.length) return;
+    //  ★ 화면에 그리는 타일이 이미 1.2km × 1.2km 를 덮는다 (z17 × 5칸).
+    //    그보다 짧은 경로는 **이미 다 받고 있다** — 미리 받아봐야 같은 요청이다.
+    //    실제로 도보 796m 에서 아무 차이가 없었다.
+    //    긴 경로(주행)에서만 뜻이 있다.
+    if (routeTotalM < 1200) return;
+    const sig = routeCoords.length + '/' + routeCoords[0].lat.toFixed(4);
+    if (sig === prefetchedFor) return;
+    prefetchedFor = sig;
+    //  ★ 욕심내지 않는다. 캐시가 40장인데 미리 79장을 받으면
+    //    **지금 보고 있는 타일을 밀어낸다.** 화면이 오히려 비어버린다.
+    //    경로 위 지점만, 이웃 칸 없이, 12장까지만.
+    //  ※ 담을 수 있는 것보다 많이 받아오는 건 받지 않느니만 못하다.
+    const z = tileZ() - RZ_DROP;
+    const seen = new Set();
+    const LIMIT = 12;
+    const step = Math.max(1, Math.floor(routeCoords.length / 24));
+    for (let i = 0; i < routeCoords.length && seen.size < LIMIT; i += step) {
+      const t = latLngToTilePixel(routeCoords[i].lat, routeCoords[i].lng, z);
+      const tx = Math.floor(t.tx), ty = Math.floor(t.ty);
+      const key = `${z}/${tx}/${ty}`;
+      if (seen.has(key) || rasterCache[key]) continue;
+      seen.add(key);
+      loadRasterTile(z, tx, ty);
+    }
+  }
+
+  function drawRasterMap(cx, cy) {
+    if (!flatCv) {
+      flatCv = document.createElement('canvas');
+      flatCv.width = FLAT_W; flatCv.height = FLAT_H;
+      flatCtx = flatCv.getContext('2d');
+    }
+    const z0 = tileZ();
+    const key = `${z0}|${cx.toFixed(6)}|${cy.toFixed(6)}|${viewRot.toFixed(3)}|${rasterVersion}`;
+    if (key === flatKey) { blitFlat(); return; }
+    flatKey = key;
+
+    const f = flatCtx;
+    f.setTransform(1, 0, 0, 1, 0, 0);
+    f.clearRect(0, 0, FLAT_W, FLAT_H);
+
+    // ① 평평하게, 다만 진행 방향으로 돌려서 그린다
+    f.save();
+    f.translate(POS_X + FLAT_OX, POS_Y + FLAT_OY);
+    f.rotate(viewRot);
+    f.translate(-(POS_X + FLAT_OX), -(POS_Y + FLAT_OY));
+    const z = tileZ() - RZ_DROP;
+    const rcx = cx / (1 << RZ_DROP), rcy = cy / (1 << RZ_DROP);   // 낮춘 줌에서의 중심 타일
+    const need = 1;          // 3x3 = 9장이면 판(1000x1180)을 덮는다
+    //  ★★ 타일을 받는 **순서**가 중요하다.
+    //    전에는 격자 순서(왼쪽 위부터)로 요청했다. 그러면 화면 구석 타일이
+    //    내 발밑 타일보다 먼저 도착한다. 브라우저는 한 번에 6개쯤만 받으므로
+    //    가장 필요한 곳이 가장 늦게 오는 일이 생긴다.
+    //  ★ 내 위치에서 가까운 순으로 요청한다. 같은 시간에 받아도
+    //    **먼저 보이는 곳부터** 채워진다.
+    //  ※ "처음엔 뭉뚝하다가 걷다 보면 길이 생긴다" 의 실제 원인은
+    //    타일이 안 왔을 때 한 단계 위 타일을 늘려 채우기 때문이다.
+    //    받는 속도를 못 바꾸면, 적어도 **필요한 순서**는 바꿀 수 있다.
+    const cells = [];
+    for (let tx = Math.floor(rcx) - need; tx <= Math.floor(rcx) + need; tx++) {
+      for (let ty = Math.floor(rcy) - need; ty <= Math.floor(rcy) + need; ty++) {
+        const fx = (tx - rcx) * RTILE + POS_X + FLAT_OX;
+        const fy = (ty - rcy) * RTILE + POS_Y + FLAT_OY;
+        const cxp = fx + RTILE / 2 - (POS_X + FLAT_OX);
+        const cyp = fy + RTILE / 2 - (POS_Y + FLAT_OY);
+        //  앞쪽(화면 위)을 뒤쪽보다 조금 더 급한 것으로 친다 — 갈 방향이니까
+        cells.push({ tx, ty, fx, fy, d: cxp * cxp + (cyp < 0 ? cyp * 0.8 : cyp) ** 2 });
+      }
+    }
+    cells.sort((a, b) => a.d - b.d);
+    for (const c of cells) drawTileOrNear(f, z, c.tx, c.ty, c.fx, c.fy);
+    f.restore();
+    blitFlat();
+  }
+
+  // ② 가로줄 단위로 원근을 먹여 옮겨 그린다
+  function blitFlat() {
+    //  ★ 줄 간격을 거리에 따라 벌린다.
+    //    먼 곳은 원근으로 잘게 눌리므로 촘촘히 뜰 이유가 없다.
+    //    같은 화면을 절반의 그리기로 채운다 — 발열이 곧 밝기다.
+    for (let y = POS_Y + FLAT_NEAR; y > POS_Y - FLAT_FAR; ) {
+      const dist = POS_Y - y;
+      const STEP = dist < 200 ? 6 : (dist < 500 ? 12 : 24);
+      const pNear = proj(POS_X, y);
+      const pFar  = proj(POS_X, y - STEP);
+      //  ※ 뒤편(y > POS_Y)에서는 지평선이 없다. 앞쪽으로 넘어간 뒤에만 멈춘다.
+      //  ※ 이 반복문은 아래에서 y 를 줄인다. 그냥 continue 하면 y 가 그대로라
+      //    무한루프가 된다. 건너뛸 때도 반드시 줄이고 넘어간다.
+      if (!pNear.ok || !pFar.ok) { if (y <= POS_Y) break; y -= STEP; continue; }
+      const dh = pNear.y - pFar.y;
+      if (dh <= 0.05)            { if (y <= POS_Y) break; y -= STEP; continue; }
+      const denom = 1 + (POS_Y - y) * PITCH_K * mapView.pitch;
+      const dw = (FLAT_HW * 2) / denom;
+      ctx.drawImage(
+        flatCv,
+        POS_X - FLAT_HW + FLAT_OX, (y - STEP) + FLAT_OY, FLAT_HW * 2, STEP,
+        POS_X - dw / 2, pFar.y, dw, dh + 0.6                 // 줄 사이가 벌어지지 않게 살짝 겹친다
+      );
+      y -= STEP;
+    }
+  }
+  //  ★ 골목·보행로를 그리는 반경(화면 픽셀). 줌 18에서 1px ≈ 0.47m 이므로
+  //    220px ≈ 약 100m — 걸을 때 실제로 쓰는 범위다.
+  const NEAR_R  = 220;
+  const NEAR_R2 = NEAR_R * NEAR_R;
+  //  ★ 도로 이름을 붙일 수 있는 최대 거리(화면 픽셀).
+  //    경로선이나 내 위치에서 이만큼 안쪽에 있는 도로만 이름을 얻는다.
+  const LABEL_MAX_D = 90;
+  const vtCache = {};       // key -> [{props, geom}] 도로 피처 배열
+  const vtLoading = new Set();
+
+  // ── 인라인 MVT 파서 (Protocol Buffer, 외부 라이브러리 없음) ──
+  function parseMVT(buffer) {
+    const buf = new Uint8Array(buffer);
+    const dec = new TextDecoder();
+
+    function varint(p) {
+      let shift = 0, val = 0, b;
+      do { b = buf[p++]; val += (b & 0x7f) * (2 ** shift); shift += 7; } while (b & 0x80);
+      return { val, pos: p };
+    }
+    function packedU32(s, e) {
+      const a = []; let p = s;
+      while (p < e) { const r = varint(p); a.push(r.val); p = r.pos; }
+      return a;
+    }
+    function zz(n) { return (n >>> 1) ^ -(n & 1); }
+
+    function decodeGeom(ints) {
+      const rings = []; let ring, x = 0, y = 0, i = 0;
+      while (i < ints.length) {
+        const cl = ints[i++], cmd = cl & 7, cnt = cl >> 3;
+        if (cmd === 1) {
+          for (let j = 0; j < cnt; j++) {
+            x += zz(ints[i++]); y += zz(ints[i++]);
+            ring = [{x, y}]; rings.push(ring);
+          }
+        } else if (cmd === 2) {
+          for (let j = 0; j < cnt; j++) {
+            x += zz(ints[i++]); y += zz(ints[i++]);
+            ring && ring.push({x, y});
+          }
+        }
+        // cmd 7 = ClosePath, params 없음
+      }
+      return rings;
+    }
+
+    function layerVal(s, e) {
+      let p = s, v = null;
+      while (p < e) {
+        const r = varint(p); p = r.pos;
+        const fn = r.val >> 3, wt = r.val & 7;
+        const dv = new DataView(buf.buffer);
+        if (wt === 2) { const l = varint(p); p = l.pos; if (fn===1) v = dec.decode(buf.slice(p, p+l.val)); p += l.val; }
+        else if (wt === 0) { const l = varint(p); p = l.pos; if (fn===6) v = zz(l.val); else if (fn===4||fn===5) v = l.val; else if (fn===7) v = !!l.val; }
+        else if (wt === 5) { if (fn===2) v = dv.getFloat32(p,true); p+=4; }
+        else if (wt === 1) { if (fn===3) v = dv.getFloat64(p,true); p+=8; }
+      }
+      return v;
+    }
+
+    function readLayer(s, e) {
+      let p = s, name = '';
+      const keys = [], vals = [], rawFeats = [];
+      while (p < e) {
+        const r = varint(p); p = r.pos;
+        const fn = r.val >> 3, wt = r.val & 7;
+        if (wt === 0) { const l = varint(p); p = l.pos; } // extent 등 무시해도 됨 (기본 4096)
+        else if (wt === 2) {
+          const l = varint(p); p = l.pos;
+          const ds = p, de = p + l.val; p = de;
+          if (fn===1) name = dec.decode(buf.slice(ds, de));
+          else if (fn===3) keys.push(dec.decode(buf.slice(ds, de)));
+          else if (fn===4) vals.push(layerVal(ds, de));
+          else if (fn===2) rawFeats.push([ds, de]);
+        } else if (wt===1) p+=8; else if (wt===5) p+=4;
+      }
+      const features = rawFeats.map(([fs, fe]) => {
+        let fp = fs, type = 0, tags = [], geomInts = [];
+        while (fp < fe) {
+          const r = varint(fp); fp = r.pos;
+          const fn = r.val >> 3, wt = r.val & 7;
+          if (wt===0) { const l = varint(fp); fp = l.pos; if (fn===3) type = l.val; }
+          else if (wt===2) { const l = varint(fp); fp = l.pos; if (fn===2) tags = packedU32(fp, fp+l.val); else if (fn===4) geomInts = packedU32(fp, fp+l.val); fp += l.val; }
+          else if (wt===1) fp+=8; else if (wt===5) fp+=4;
+        }
+        if (type !== 2) return null; // LineString만 (도로)
+        const props = {};
+        for (let i = 0; i < tags.length-1; i+=2) props[keys[tags[i]]] = vals[tags[i+1]];
+        return { props, geom: decodeGeom(geomInts) };
+      }).filter(Boolean);
+      return { name, features };
+    }
+
+    const layers = {}; let pos = 0;
+    while (pos < buf.length) {
+      const r = varint(pos); pos = r.pos;
+      const fn = r.val >> 3, wt = r.val & 7;
+      if (wt===2) { const l = varint(pos); pos = l.pos; const e = pos + l.val; if (fn===3) { const lay = readLayer(pos, e); if (lay.name) layers[lay.name] = lay; } pos = e; }
+      else if (wt===0) { const l = varint(pos); pos = l.pos; }
+      else if (wt===1) pos+=8; else if (wt===5) pos+=4;
+    }
+    return layers;
+  }
+
+  // ── 벡터 타일 로드 ──
+  async function loadVectorTile(z, tx, ty) {
+    const key = `${z}/${tx}/${ty}`;
+    if (key in vtCache || vtLoading.has(key)) return;
+    vtLoading.add(key);
+    try {
+      const url = `https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/${z}/${tx}/${ty}.mvt?access_token=${MAPBOX_TOKEN}`;
+      const resp = await fetch(url);
+      if (!resp.ok) throw 0;
+      const layers = parseMVT(await resp.arrayBuffer());
+      vtCache[key] = (layers['road'] || { features: [] }).features;
+    } catch { vtCache[key] = []; }
+    vtLoading.delete(key);
+  }
+
+  // ── 도로 벡터선 그리기 ──
+  //  ══════════════════════════════════════════
+  //   도로 이름
+  //  ══════════════════════════════════════════
+  //  ★ 왜 넣나: 가시성을 위해 선을 확 줄였다. 줄인 만큼
+  //    "어느 길인가" 가 안 보인다. 선으로 못 주는 정보를 **이름으로 준다.**
+  //    Meta 자체 내비도 선을 줄이고 이름을 남기는 쪽이다.
+  //
+  //  ※ 선을 따라 휘어지게 쓰지 않는다. 지도가 진행 방향으로 돌아가므로
+  //    휜 글자는 뒤집히거나 거꾸로 선다. **항상 수평**으로 쓴다 —
+  //    흘깃 보는 화면에서 읽는 데 드는 시간이 가장 짧다.
+  //
+  //  ※ 같은 이름을 여러 번 쓰지 않고, 겹치면 나중 것을 버린다.
+  //    글자가 겹치면 더하기 화면에서는 밝기가 더해져 **아무것도 못 읽는다.**
+  let roadLabels = [];      // {name, x, y, prio, d}
+  //  ★ 이번 프레임의 경로선 화면 좌표 (도로 이름을 고를 때 쓴다)
+  let routeScreen = [];
+  const LABEL_FONT = '700 19px -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif';
+
+  function flushRoadLabels() {
+    if (!roadLabels.length) return;
+    ctx.save();
+    ctx.font = LABEL_FONT;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    //  ★★ 고르는 규칙을 바꿨다.
+    //    전에는 **화면에 그려지는 도로 중 아무거나** 굵은 순으로 7개였다.
+    //    그래서 경로와 아무 상관 없는 이름이 떴다 — 규칙이랄 것도 없었다.
+    //  ★ 이제는 '경로에 가까운 순 → 나에게 가까운 순' 이다.
+    //    이 화면에서 이름이 필요한 이유는 하나뿐이다 —
+    //    **내가 지금 어느 길에 있고 어느 길로 가는가.**
+    //    그것과 무관한 이름은 배경 소음일 뿐이다.
+    roadLabels.sort((a, b) => a.d - b.d);
+    const placed = [];
+    const seen = new Set();
+    for (const L of roadLabels) {
+      if (seen.has(L.name)) continue;                 // 같은 이름은 한 번만
+      const w = ctx.measureText(L.name).width + 10;
+      const h = 24;
+      const box = { x1: L.x - w/2, y1: L.y - h/2, x2: L.x + w/2, y2: L.y + h/2 };
+      if (box.x1 < 4 || box.x2 > 596 || box.y1 < ROAD_TOP_CUT || box.y2 > 596) continue;
+      let hit = false;
+      for (const q of placed) {
+        if (box.x1 < q.x2 && box.x2 > q.x1 && box.y1 < q.y2 && box.y2 > q.y1) { hit = true; break; }
+      }
+      if (hit) continue;
+      placed.push(box);
+      seen.add(L.name);
+      //  ★ 검은 외곽선을 못 쓴다 (더하기 화면에서 검정 = 투명).
+      //    대신 글자 아래에 도로선을 지우듯 어둡게 깔 수도 없다.
+      //    그래서 순백 + 굵은 획으로만 승부한다. 그게 가장 밝다.
+      //  ★ 흰색이면 도로선과 구분이 안 된다 (도로도 흰색이다).
+      //    하늘색으로 띄운다 — 경로(초록)·접근 점선(노랑)과도 겹치지 않는 색이다.
+      //    ※ 더하기 화면에서 색은 장식이 아니라 **분류**다. 같은 색이면 같은 것이다.
+      ctx.fillStyle = '#7dd8ff';
+      ctx.fillText(L.name, L.x, L.y);
+      if (placed.length >= 5) break;   // 너무 많으면 화면이 다시 시끄러워진다
+    }
+    ctx.restore();
+    roadLabels = [];
+  }
+
+  function drawRoads(cx, cy) {
+    const z = tileZ();
+    roadLabels = [];
+    const EXTENT = 4096;
+    const tilesNeeded = Math.ceil(300 / TILE_SIZE) + 1;
+
+    for (let tx = Math.floor(cx) - tilesNeeded; tx <= Math.floor(cx) + tilesNeeded; tx++) {
+      for (let ty = Math.floor(cy) - tilesNeeded; ty <= Math.floor(cy) + tilesNeeded; ty++) {
+        const key = `${z}/${tx}/${ty}`;
+        if (!(key in vtCache)) { loadVectorTile(z, tx, ty); continue; }
+        const roads = vtCache[key];
+        if (!roads.length) continue;
+
+        // ══════════════════════════════════════════
+        //  ★★ 여기를 통째로 갈아엎었다 (2026-08-27). 왜인지 적어둔다.
+        // ══════════════════════════════════════════
+        //
+        //  실차 주행에서 "지도가 안 보인다" 가 나왔다. 원인을 재보니 셋이었다.
+        //
+        //  ① 반투명을 썼다 — 이게 가장 컸다.
+        //     안경은 **더하기 화면**이다. 검정을 못 그린다. 화면 밝기가
+        //     바깥 풍경 밝기에 그대로 **더해질 뿐**이다.
+        //     즉 대비를 만드는 수단이 밝기 하나뿐인데,
+        //     알파 0.5 = 약 2,500 nit 이다.
+        //     낮 도심 배경은 아스팔트 1,000~3,000 · 콘크리트 5,000~9,000 ·
+        //     하늘 6,000~10,000 nit 이다.
+        //     → 밝은 노면이나 하늘에 겹치는 순간 도로선이 **배경보다 어두워진다.**
+        //       안 보이는 게 아니라 없는 것과 같다.
+        //     ※ 더하기 화면에서 알파는 '연하게' 가 아니라 '지우기' 다.
+        //       그릴 것은 1.0 으로 그리고, 아닌 것은 아예 안 그린다.
+        //       중간이 제일 나쁘다.
+        //
+        //  ② 선이 눈의 한계보다 얇았다.
+        //     42 PPD 이므로 1px = 1.43분각이다.
+        //     옛 중심선 1.6~3.2px = 2.3~4.6분각.
+        //     높은 대비에서야 1분각도 갈리지만, **낮은 대비에서는 5~10분각**은
+        //     있어야 한다. 도광판 자체 번짐까지 더하면 더 그렇다.
+        //     → 옛 도로선은 전부 그 아래에 있었다.
+        //
+        //  ③ 그릴 게 너무 많았다.
+        //     Mapbox 의 도로를 거의 다 그렸다 — 골목·보행로까지.
+        //     화면은 600×600 이고 시야는 **고작 20°** 다.
+        //     반투명 흰 선 수십 개가 겹치면 더하기 화면에서는 밝기가 서로
+        //     더해져 흰 그물이 된다. 경로선이 안 보인 게 아니라
+        //     **배경이 너무 시끄러웠다.**
+        //
+        //  ★ 그래서 이렇게 바꿨다:
+        //    · 알파를 없앤다 (가장 흐린 것도 0.85 = 약 4,250 nit)
+        //    · 두 겹(면+심) 을 한 겹 굵은 선으로 — 겹칠수록 번지기만 했다
+        //    · 등급을 다섯에서 **둘**로 줄이고, 골목·보행로는 아예 뺀다
+        //    · 가장 얇은 선도 7px(10분각) 아래로 내려가지 않게
+        //
+        //  ※ 도보/드라이브를 **구분하지 않는다.** 눈과 화면은 같은 것이므로
+        //    잘 보이는 그림도 하나여야 한다. 모드로 갈리면 한쪽은 반드시 못 쓴다.
+        for (const { props, geom } of roads) {
+          const cls = props.class || '';
+          const z = tileZ();
+
+          //  ══════════════════════════════════════════
+          //   ★★ 처음엔 보행로·골목을 통째로 뺐다. 그건 틀렸다.
+          //  ══════════════════════════════════════════
+          //   "보행로를 안 그리면 걷기 모드에서 뭘 보냐" — 맞는 지적이었다.
+          //   흰 그물이 된 진짜 원인은 '보행로가 있어서' 가 아니라
+          //   **모든 걸 화면 끝까지 흐리게 그려서** 였다.
+          //   등급으로 자를 게 아니라 **거리로** 잘랐어야 했다.
+          //
+          //   ★ 가까운 곳은 다 그리고, 먼 곳은 큰길만 그린다.
+          //     걸을 때 필요한 보행로는 발밑 100m 다.
+          //     200m 앞 골목은 걸을 때도 안 본다 —
+          //     그런데 그게 화면 위쪽에서 겹쳐 쌓여 다 뭉갰다.
+          //
+          //   ※ 모드로 가르지 않는다. 차로 가면 100m 를 6초에 지나가니
+          //     알아서 흘러가고, 걸으면 그 자리에 오래 남는다.
+          //     **같은 규칙인데 속도가 알아서 다르게 만든다.**
+          //     모드로 갈라놓으면 한쪽은 반드시 손이 덜 간 채로 남는다.
+          let lw, alpha;
+          const nearOnly = false;   // 거리로 솎아내지 않는다 (위 주석 참고)
+          if (['motorway','trunk','primary','secondary'].includes(cls)) {
+            lw = 11; alpha = 1.0;                    // 큰길 — 화면 끝까지
+          } else if (['tertiary','street','street_limited'].includes(cls)) {
+            lw = 7;  alpha = 0.85;                   // 동네길 — 화면 끝까지
+          } else if (['service','alley'].includes(cls)) {
+            if (z < 17) continue;
+            lw = 6;  alpha = 0.85;
+          } else if (['path','footway','pedestrian','steps','track'].includes(cls)) {
+            if (z < 17) continue;
+            //  ★★ 여기를 되돌렸다. '내 주변 100m 만' 은 틀린 판단이었다.
+            //    도보 경로는 **보행로를 따라간다.** 그 보행로를 안 그리니
+            //    경로선이 허공을 가로지르는 것처럼 보였다 —
+            //    "길이 없는 곳으로 경로를 잡는다" 는 지적이 그것이었다.
+            //  ※ 화면에서 지워도 되는 선과 안 되는 선이 있다.
+            //    **경로가 밟고 지나가는 선은 지우면 안 된다.**
+            //    시끄러움을 줄이려다 경로를 못 읽게 만들면 본말이 뒤집힌다.
+            //  ※ 시끄러움은 다른 데서 잡는다 — 위쪽 뭉개지는 띠(ROAD_TOP_CUT)를
+            //    비우는 것으로 이미 대부분 잡힌다.
+            lw = 5;  alpha = 0.85;
+          } else {
+            continue;                                // 그 밖(철길·페리 등)은 뺀다
+          }
+
+          ctx.beginPath();
+          ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+          const pts = [];          // 화면에 실제로 그려진 점들 (이름 자리 잡기용)
+          for (const ring of geom) {
+            let first = true;
+            for (const {x, y} of ring) {
+              const fx = (tx + x / EXTENT - cx) * TILE_SIZE + POS_X;
+              const fy = (ty + y / EXTENT - cy) * TILE_SIZE + POS_Y;
+              //  ★ 거리는 **기울이기 전** 좌표로 잰다.
+              //    기울인 뒤 좌표는 앞쪽이 압축돼 있어 거리가 실제와 다르다.
+              if (nearOnly) {
+                const ddx = fx - POS_X, ddy = fy - POS_Y;
+                if (ddx*ddx + ddy*ddy > NEAR_R2) { first = true; continue; }
+              }
+              const p = proj(fx, fy);
+              if (!p.ok) { first = true; continue; }   // 지평선 너머는 끊기
+              //  ★ 화면 위쪽 띠는 기울이기 때문에 도로가 몇 px 안에 겹쳐 쌓인다.
+              //    더하기 화면에서 겹치면 밝기가 더해져 **흰 덩어리**가 된다.
+              //    쿼터뷰는 그대로 두되, 그 뭉개지는 띠에는 아무것도 안 그린다.
+              //    비어 있는 게 뭉개진 것보다 낫다.
+              if (p.y < ROAD_TOP_CUT) { first = true; continue; }
+              first ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+              first = false;
+              pts.push(p);
+            }
+          }
+          //  한 겹으로만 칠한다 — 두 겹은 번짐만 키웠다
+          ctx.strokeStyle = alpha >= 1 ? '#ffffff' : `rgba(255,255,255,${alpha})`;
+          ctx.lineWidth = lw;
+          ctx.stroke();
+
+          //  ★ 이름 후보를 모아둔다. 여기서 바로 쓰면 뒤에 그려지는 도로가
+          //    글자 위를 덮는다. 도로를 다 그린 뒤 한꺼번에 얹는다.
+          //  ※ 골목·보행로 이름은 안 쓴다 — 화면이 다시 시끄러워진다.
+          const nm = props.name_ko || props.name || '';
+          if (nm && nm.length <= 12 && pts.length) {
+            //  ★ 이름을 붙일 자리는 '가운데' 가 아니라
+            //    **경로(또는 나)에 가장 가까운 지점** 이다.
+            //    그래야 "이 길이 그 길이다" 가 눈으로 이어진다.
+            let best = null, bestD = Infinity;
+            for (let i = 0; i < pts.length; i += 2) {
+              const p = pts[i];
+              let dmin = Math.hypot(p.x - POS_X, p.y - POS_Y) * 1.6;   // 나까지 거리 (경로보다 덜 쳐준다)
+              for (let j = 0; j < routeScreen.length; j++) {
+                const q = routeScreen[j];
+                const d = Math.hypot(p.x - q.x, p.y - q.y);
+                if (d < dmin) dmin = d;
+              }
+              if (dmin < bestD) { bestD = dmin; best = p; }
+            }
+            //  ★ 멀면 아예 안 쓴다. 경로와 상관없는 이름이 떴던 게 이것 때문이다.
+            if (best && bestD <= LABEL_MAX_D) {
+              roadLabels.push({ name: nm, x: best.x, y: best.y, d: bestD });
+            }
+          }
+        }
+      }
+    }
+    flushRoadLabels();
+  }
+
+  // ── 화면 전환 ──
+  function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+
+  //  ══════════════════════════════════════════
+  //   시험용 위치 — 주소 끝에 ?at=위도,경도
+  //  ══════════════════════════════════════════
+  //  ★ 청두에 가기 전에 청두에서 어떻게 도는지 눈으로 보려고 넣었다.
+  //    이 값이 있으면 GPS 대신 이 자리에 있는 것처럼 돈다 —
+  //    검색(텐센트)·경로(텐센트)·지도·나라 판정까지 전부 실제와 같게 움직인다.
+  //
+  //    예)  ...ko-navi.html?at=30.6589,104.0657     (청두 천부광장)
+  //
+  //  ※ **켜져 있다는 걸 반드시 화면에 알린다.** 시험 위치인 줄 모르고
+  //    "GPS 가 이상하다" 고 헤매면 안 된다. 오늘 그런 걸로 반나절을 썼다.
+  //  ※ 값이 없으면 아무 일도 안 한다. 평소 동작에 손대지 않는다.
+  let testPos = null;
+  (function readTestPos() {
+    try {
+      const m = (location.search || '').match(/[?&]at=(-?[\d.]+),(-?[\d.]+)/);
+      if (!m) return;
+      const lat = parseFloat(m[1]), lng = parseFloat(m[2]);
+      if (!isFinite(lat) || !isFinite(lng)) return;
+      testPos = { lat, lng };
+    } catch (e) {}
+  })();
+
+  // ── GPS ──
+  function getLocation() {
+    if (testPos) {
+      currentPos = { lat: testPos.lat, lng: testPos.lng };
+      const el = document.getElementById('current-location');
+      if (el) el.textContent = `🧪 시험 위치 ${testPos.lat.toFixed(4)}, ${testPos.lng.toFixed(4)}`;
+      const tag = document.getElementById('build-tag');
+      if (tag) { tag.textContent += ' · 시험'; tag.style.color = '#ffd27a'; }
+      buildHome();
+      return;
+    }
+    if (!navigator.geolocation) { fallbackPos(); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        currentPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        const country = currentCountry();
+        const flag = country === 'cn' ? '🇨🇳' : '🇰🇷';
+        document.getElementById('current-location').textContent =
+          `${flag} ${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`;
+        buildHome(); // 나라 바뀌면 프리셋 갱신
+      },
+      () => fallbackPos(),
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
+  }
+  function fallbackPos() {
+    // 캐시된 마지막 위치 우선 사용
+    try {
+      const cached = JSON.parse(localStorage.getItem('ko_navi_last_pos') || 'null');
+      if (cached) {
+        currentPos = cached;
+        document.getElementById('current-location').textContent = `📍 마지막 위치 (${cached.lat.toFixed(4)}, ${cached.lng.toFixed(4)})`;
+        buildHome();
+        return;
+      }
+    } catch {}
+    currentPos = { lat: 37.5665, lng: 126.9780 };
+    document.getElementById('current-location').textContent = '🇰🇷 서울시청 (기본값)';
+  }
+
+  // ── 홈 ──
+  function buildHome() {
+
+    // 최근 목적지
+    //  ※ 최근 목적지도 지금 있는 나라 것만 보여준다.
+    //    청두에서 서울 목록을 볼 이유가 없다.
+    const recents = loadRecentDests().filter(d => favCountry(d) === currentCountry());
+    const recentSection = document.getElementById('recent-section');
+    const recentListBox = document.getElementById('recent-list');
+    recentListBox.innerHTML = '';
+    const recentList = document.createElement('div');
+    recentList.className = 'dest-list-inner';
+    recentListBox.appendChild(recentList);
+    if (recents.length > 0) {
+      recentSection.style.display = 'block';
+      recents.forEach(dest => {
+        const el = document.createElement('div');
+        el.className = 'dest-item focusable';
+        el.tabIndex = 0;
+        //  ★ → 로 담으려면 그 항목이 무엇인지 알아야 한다. 자료를 달아둔다.
+        el.dataset.name = dest.name;
+        el.dataset.dest = JSON.stringify(dest);
+        //  ★ 최근 항목에도 '이미 담긴 것인가' 를 달아둔다.
+        //    이게 없으면 담은 뒤에도 계속 '담기' 로만 동작해서 지울 수가 없었다.
+        el.dataset.mine = loadFavs().some(f => f.name === dest.name) ? '1' : '';
+        el.dataset.recent = '1';        // ← 로 최근 목록에서 지울 수 있는 항목
+        el.innerHTML = `<span class="icon">${loadFavs().some(f => f.name === dest.name) ? '★' : '🕐'}</span><div><div class="name">${dest.name}</div><div class="addr" style="font-size:16px;color:#b8c8d8">${dest.addr}</div></div>`;
+        el.addEventListener('click', () => startNav(dest));
+        recentList.appendChild(el);
+      });
+    } else {
+      recentSection.style.display = 'none';
+    }
+
+    //  ★ 내가 담은 것과 기본 목록은 **다른 것**이다. 칸을 나눠 그린다.
+    //  ※ 즐겨찾기는 최근 목적지와 달리 **나라로 걸러 숨기지 않는다.** 탭으로 고른다.
+    //  ★★ `if (favTab === null) favTab = currentCountry()` 로 했다가 시험에서 걸렸다.
+    //    앱이 처음 그려질 때는 **아직 위치를 모른다.** currentCountry() 가 그때
+    //    무조건 'kr' 을 준다. 그 값으로 잠가버리면 **청두에서 열어도 한국 탭**이 된다.
+    //    → 위치를 알고 난 뒤에 잠근다. 그 전에는 잠깐 한국으로 보여주기만 한다.
+    //    ※ 기본값을 정할 때는 **그 값을 알 수 있는 시점인지**부터 본다.
+    if (favTab === null && currentPos) favTab = currentCountry();
+    const tabNow = favTab !== null ? favTab : 'kr';
+    const favKr = favsOf('kr'), favCn = favsOf('cn');
+    const favs = tabNow === 'cn' ? favCn : favKr;
+
+    //  탭 칠하기 — 고른 쪽에 ● 를 붙인다. 색만으로 알리지 않는다.
+    const tabKr = document.getElementById('fav-tab-kr');
+    const tabCn = document.getElementById('fav-tab-cn');
+    tabKr.textContent = (tabNow === 'kr' ? '● ' : '') + '한국 ' + favKr.length;
+    tabCn.textContent = (tabNow === 'cn' ? '● ' : '') + '중국 ' + favCn.length;
+    tabKr.classList.toggle('on', tabNow === 'kr');
+    tabCn.classList.toggle('on', tabNow === 'cn');
+    //  Enter 와 손가락으로도 바뀌게 한다. 안경은 ←→ 로 쓰지만
+    //  사파리에서 시험할 때 눌러볼 길이 없으면 확인을 못 한다.
+    //  ※ addEventListener 를 쓰면 화면을 다시 그릴 때마다 쌓인다. onclick 으로 갈아끼운다.
+    tabKr.onclick = e => { e.stopPropagation(); favTab = 'kr'; buildHome(); };
+    tabCn.onclick = e => { e.stopPropagation(); favTab = 'cn'; buildHome(); };
+    document.getElementById('fav-tabs').onclick = () => {
+      favTab = tabNow === 'kr' ? 'cn' : 'kr'; buildHome();
+      const b = homeFocusables.findIndex(x => x && x.id === 'fav-tabs');
+      if (b >= 0) focusHome(b);
+    };
+    function paintList(boxId, items, mine) {
+      const box = document.getElementById(boxId);
+      box.innerHTML = '';
+      const inner = document.createElement('div');
+      inner.className = 'dest-list-inner';
+      box.appendChild(inner);
+      items.forEach(dest => {
+        const el = document.createElement('div');
+        el.className = 'dest-item focusable';
+        el.tabIndex = 0;
+        el.dataset.name = dest.name;
+        el.dataset.dest = JSON.stringify(dest);
+        el.dataset.mine = mine ? '1' : '';
+        el.innerHTML = `<span class="icon">${dest.icon}</span><div><div class="name">${dest.name}</div><div class="addr">${dest.addr}</div></div>`;
+        el.addEventListener('click', () => startNav(dest));
+        inner.appendChild(el);
+      });
+    }
+    //  ★ 한쪽이라도 담긴 게 있으면 칸을 보여준다.
+    //    보고 있는 탭이 비었다고 칸을 숨기면 **탭 자체에 갈 수가 없어** 반대쪽으로 못 넘어간다.
+    //    (담은 게 없을 때만 칸을 숨긴다는 예전 규칙을 그대로 두면 여기서 갇힌다.)
+    const anyFav = favKr.length + favCn.length > 0;
+    document.getElementById('fav-section').style.display = anyFav ? 'block' : 'none';
+    paintList('fav-list', favs, true);
+    //  보고 있는 탭만 비었으면 그렇다고 알린다 — 빈 자리를 말없이 두지 않는다.
+    const fe = document.getElementById('fav-empty');
+    if (fe) fe.style.display = (anyFav && !favs.length) ? 'block' : 'none';
+    //  둘 다 비었으면 어떻게 담는지 알려준다. 빈 화면만 두지 않는다.
+    const eh = document.getElementById('empty-hint');
+    if (eh) eh.style.display = (!anyFav && !recents.length) ? 'block' : 'none';
+
+    //  ★ 커서가 도는 순서 = 화면에 보이는 순서. 어긋나면 어지럽다.
+    homeFocusables = [
+      document.getElementById('btn-map'),
+      document.getElementById('here-box'),
+      document.getElementById('btn-foot'),
+      document.getElementById('btn-drive'),
+      ...document.querySelectorAll('#recent-list .dest-item'),
+      //  ★ 탭 줄도 커서가 서는 자리다. 칸이 보일 때만 넣는다 —
+      //    안 보이는 것에 커서가 서면 "눌렀는데 아무 일도 안 난다" 가 된다.
+      ...(anyFav ? [document.getElementById('fav-tabs')] : []),
+      ...document.querySelectorAll('#fav-list .dest-item')
+    ].filter(Boolean);
+    //  ★ 위치가 잡히면 buildHome 이 다시 돈다. 그때마다 맨 위로 튕기면
+    //    모드를 고르다가 포커스를 잃는다 — '눌렀는데 안 먹네' 로 보인다.
+    focusHome(Math.min(focusIndex || 0, homeFocusables.length - 1));
+  }
+
+  function focusHome(idx) {
+    homeFocusables.forEach(el => el.classList.remove('focused'));
+    if (homeFocusables[idx]) {
+      homeFocusables[idx].classList.add('focused');
+      homeFocusables[idx].focus();
+      focusIndex = idx;
+      scrollHomeIntoView(homeFocusables[idx]);
+    }
+  }
+
+  //  ★ 고른 항목이 화면 밖이면 **화면 전체를** 그만큼 밀어 올린다.
+  //    ※ 스크롤 막대를 쓰지 않는다 — 안경에는 잡을 것이 없다.
+  //    ※ 칸마다 따로 밀면 칸이 눌렸을 때 아무 소용이 없다. 통째로 민다.
+  const HOME_TOP = 70, HOME_BOTTOM = 560;   // 이 사이에 들어오게 한다
+  function scrollHomeIntoView(el) {
+    const pane = document.getElementById('home-scroll');
+    if (!pane || !el) return;
+    const cur = parseFloat(pane.dataset.shift || '0');
+    const er = el.getBoundingClientRect();
+    let shift = cur;
+    if (er.bottom > HOME_BOTTOM) shift = cur - (er.bottom - HOME_BOTTOM) - 6;
+    else if (er.top < HOME_TOP)  shift = cur + (HOME_TOP - er.top) + 6;
+    if (shift > 0) shift = 0;               // 맨 위보다 더 내려가지 않는다
+    if (shift !== cur) {
+      pane.dataset.shift = String(shift);
+      pane.style.transform = `translateY(${shift}px)`;
+    }
+  }
+
+  // ※ 카카오 SDK 로더는 걷어냈다 — 검색을 워커(TMAP)로 옮겼다.
+
+  let searchTimer = null;
+  document.getElementById('search-input').addEventListener('input', e => {
+    clearTimeout(searchTimer);
+    const q = e.target.value.trim();
+    const status = document.getElementById('search-status');
+    if (!q) {
+      status.className = 'search-empty'; status.textContent = '검색어를 입력하세요';
+      status.style.display = 'block';
+      document.getElementById('search-results').innerHTML = '';
+      return;
+    }
+    status.className = 'search-loading'; status.textContent = '검색 중...';
+    status.style.display = 'block';
+    searchTimer = setTimeout(() => doSearch(q), 500);
+  });
+
+  // ── 중국 좌표계 변환 ──
+  //  중국은 GPS 좌표(WGS-84)를 그대로 쓰지 않고 의도적으로 틀어놓은
+  //  GCJ-02를 쓴다. 변환하지 않으면 300~500m 어긋난다.
+  function gcjDelta(lat, lng) {
+    const a = 6378245.0, ee = 0.00669342162296594323;
+    function tLat(x, y) {
+      let r = -100+2*x+3*y+0.2*y*y+0.1*x*y+0.2*Math.sqrt(Math.abs(x));
+      r += (20*Math.sin(6*x*Math.PI)+20*Math.sin(2*x*Math.PI))*2/3;
+      r += (20*Math.sin(y*Math.PI)+40*Math.sin(y/3*Math.PI))*2/3;
+      r += (160*Math.sin(y/12*Math.PI)+320*Math.sin(y*Math.PI/30))*2/3;
+      return r;
+    }
+    function tLng(x, y) {
+      let r = 300+x+2*y+0.1*x*x+0.1*x*y+0.1*Math.sqrt(Math.abs(x));
+      r += (20*Math.sin(6*x*Math.PI)+20*Math.sin(2*x*Math.PI))*2/3;
+      r += (20*Math.sin(x*Math.PI)+40*Math.sin(x/3*Math.PI))*2/3;
+      r += (150*Math.sin(x/12*Math.PI)+300*Math.sin(x/30*Math.PI))*2/3;
+      return r;
+    }
+    const radlat = lat/180*Math.PI;
+    let magic = Math.sin(radlat);
+    magic = 1 - ee*magic*magic;
+    const sq = Math.sqrt(magic);
+    const dLat = (tLat(lng-105, lat-35)*180) / ((a*(1-ee))/(magic*sq)*Math.PI);
+    const dLng = (tLng(lng-105, lat-35)*180) / (a/sq*Math.cos(radlat)*Math.PI);
+    return { dLat, dLng };
+  }
+  function gcj02ToWgs84(lat, lng) {   // 텐센트 결과 → GPS 좌표
+    const d = gcjDelta(lat, lng);
+    return { lat: lat - d.dLat, lng: lng - d.dLng };
+  }
+  function wgs84ToGcj02(lat, lng) {   // GPS 좌표 → 텐센트 요청용
+    const d = gcjDelta(lat, lng);
+    return { lat: lat + d.dLat, lng: lng + d.dLng };
+  }
+
+  // ── JSONP 헬퍼 (텐센트 API CORS 우회) ──
+  //  ══════════════════════════════════════════
+  //   응답을 JSON 으로 읽을 때는 반드시 이걸 쓴다
+  //  ══════════════════════════════════════════
+  //  ★★ "검색 실패: Unexpected end of JSON input" 이 뜬 자리다.
+  //    r.json() 은 응답이 **비어 있으면** 그 알 수 없는 말을 던진다.
+  //    화면에는 그 말이 그대로 찍혔고, 무엇이 왜 안 됐는지 알 수가 없었다.
+  //    (실제 원인은 릴레이 워커가 빈 응답을 준 것이었다)
+  //  ★ 먼저 글로 받아서 상태와 내용을 확인하고, 안 되면 **무엇이 왔는지** 말한다.
+  //  ※ 오류 문구는 사람이 다음에 뭘 해야 할지 알 수 있게 쓴다.
+  async function getJson(url, opts) {
+    let r;
+    try { r = await fetch(url, opts); }
+    catch (e) { throw new Error('서버에 못 닿음'); }
+    const txt = await r.text();
+    if (!r.ok) throw new Error(`서버 오류 ${r.status}` + (txt ? ' · ' + txt.slice(0, 60) : ''));
+    if (!txt.trim()) throw new Error('서버가 빈 응답을 줌');
+    try { return JSON.parse(txt); }
+    catch (e) { throw new Error('응답이 JSON 이 아님 · ' + txt.slice(0, 60)); }
+  }
+
+  function jsonp(url) {
+    return new Promise((resolve, reject) => {
+      const cb = '_tmap_' + (jsonp.n = (jsonp.n || 0) + 1) + '_' + Date.now();
+      window[cb] = data => { delete window[cb]; document.head.removeChild(s); resolve(data); };
+      const s = document.createElement('script');
+      s.src = url + `&output=jsonp&callback=${cb}`;
+      s.onerror = () => { delete window[cb]; reject(); };
+      document.head.appendChild(s);
+    });
+  }
+
+  function doSearch(q) {
+    if (currentCountry() === 'cn') {
+      doTencentSearch(q);
+    } else {
+      doKoreaSearch(q);
+    }
+  }
+
+  //  국내 장소검색 — 릴레이 워커의 /poi 를 부른다 (TMAP)
+  //  ★ 전에는 카카오 JS SDK 를 안경 화면에서 직접 불렀다.
+  //    카카오는 등록된 도메인에서만 동작해서 새 주소에서 막혔고,
+  //    실패 처리가 없어 '검색 중' 인 채로 멈췄다.
+  //    워커를 거치면 도메인 제한도 CORS 도 없고, 키도 화면에서 사라진다.
+  //    경로 계산이 TMAP 이니 검색도 같은 지도를 쓰는 편이 결과가 맞는다.
+  function doKoreaSearch(q) {
+    const el = document.getElementById('search-status');
+    let u = DEST_RELAY + '/poi?q=' + encodeURIComponent(q);
+    if (currentPos) u += `&lat=${currentPos.lat}&lng=${currentPos.lng}`;
+
+    getJson(u, { cache: 'no-store' })
+      .then(d => {
+        if (!d.ok) throw new Error(d.error || '검색 실패');
+        if (!d.places || !d.places.length) {
+          el.className = 'search-empty';
+          el.textContent = '검색 결과가 없습니다';
+          document.getElementById('search-results').innerHTML = '';
+          return;
+        }
+        renderSearchResults(d.places);
+      })
+      .catch(err => {
+        // 실패는 반드시 화면에 남긴다. 조용히 멈추면 원인을 못 찾는다.
+        el.className = 'search-empty';
+        el.textContent = '검색 실패: ' + err.message;
+        document.getElementById('search-results').innerHTML = '';
+      });
+  }
+
+  //  ══════════════════════════════════════════
+  //   중국 검색 — 세 갈래로 찾는다
+  //  ══════════════════════════════════════════
+  //  ★★ 청두 주소를 넣었더니 "검색 결과가 없습니다" 가 떴다. 재보니 둘 다 틀렸다.
+  //
+  //   ① **키가 막힌 것을 결과 없음으로 감추고 있었다.**
+  //      텐센트가 `status 121 此key每日调用量已达到上限`(하루 한도 초과) 를
+  //      돌려줬는데, 앱은 status!==0 을 전부 '결과 없음' 으로 뭉갰다.
+  //      → 원인을 감추면 고칠 수가 없다. **온 대로 보여준다.**
+  //
+  //   ② **주소는 장소검색으로 못 푼다.**
+  //      place/search 는 '이름' 을 찾는다. `吉瑞二路188号1栋1单元` 같은 주소는
+  //      geocoder 로 풀어야 한다 (실측: 신뢰도 7 · 정밀도 9 로 정확히 나옴).
+  //      게다가 반경 5km 로만 찾고 있었는데 高新区는 천부광장에서 11km 다.
+  //
+  //  ★ 그래서 가까운 곳 → 넓은 곳 → 주소 풀기 순으로 간다.
+  //    앞에서 찾으면 뒤는 안 부른다 (호출 한도를 아낀다).
+  const TENCENT_ERR = {
+    110: '요청 출처가 이 키에 등록되지 않았습니다',
+    111: '키 인증에 실패했습니다',
+    112: '요청이 거부되었습니다',
+    120: '요청이 너무 잦습니다 (잠시 뒤 다시)',
+    121: '오늘 이 키의 호출 한도를 다 썼습니다',
+    190: '키가 올바르지 않습니다',
+    310: '요청 값이 잘못되었습니다',
+  };
+
+  function tencentSearchUrl(q, boundary) {
+    return `https://apis.map.qq.com/ws/place/v1/search?keyword=${encodeURIComponent(q)}`
+         + `&boundary=${boundary}&page_size=8&key=${TENCENT_KEY}`;
+  }
+
+  async function doTencentSearch(q) {
+    const el = document.getElementById('search-status');
+    const fail = msg => {
+      el.className = 'search-empty';
+      el.textContent = msg;
+      document.getElementById('search-results').innerHTML = '';
+    };
+    const toWgs = p => {
+      const w = gcj02ToWgs84(p.location.lat, p.location.lng);
+      return { name: p.title, addr: p.address || '', lat: w.lat, lng: w.lng, dist: null };
+    };
+    const errMsg = d => TENCENT_ERR[d.status] || `검색 실패 (${d.status}) ${d.message || ''}`;
+
+    //  ★★ "결과가 있으면 멈춘다" 가 잘못이었다.
+    //    `…高新区吉瑞二路188号1栋1单元` 을 넣으면 장소검색이 `高新区` 만 보고
+    //    개발구·초등학교 따위를 잔뜩 물어온다. 결과가 있으니 지오코더까지
+    //    가지도 못했다 — **정답은 지오코더에 있었는데** 문 앞에서 멈춘 것이다.
+    //  ★ 그래서 **둘을 같이 부르고**, 주소로 정확히 풀린 게 있으면 맨 위에 둔다.
+    //    호출이 두 번이 되지만 하루 6,000회다. 아낄 자리가 아니다.
+    //  ※ 지오코더는 아무 말이나 넣어도 뭔가를 돌려준다. 그래서 신뢰도를 본다.
+    //    낮으면 목록에 안 올린다 — 엉뚱한 곳으로 안내하느니 안 보이는 게 낫다.
+    let g = null;
+    if (currentPos) g = wgs84ToGcj02(currentPos.lat, currentPos.lng);
+
+    try {
+      const [near, geo] = await Promise.all([
+        g ? jsonp(tencentSearchUrl(q, `nearby(${g.lat},${g.lng},5000,1)`)).catch(() => null) : null,
+        jsonp(`https://apis.map.qq.com/ws/geocoder/v1/?address=${encodeURIComponent(q)}&key=${TENCENT_KEY}`).catch(() => null),
+      ]);
+
+      if (near && near.status !== 0 && near.status !== 348) return fail(errMsg(near));
+
+      const list = [];
+      //  주소로 정확히 풀렸으면 맨 앞에 — 이게 사용자가 찾던 것이다
+      if (geo && geo.status === 0 && geo.result && geo.result.location) {
+        const r = geo.result;
+        const rel = r.reliability == null ? 0 : r.reliability;
+        if (rel >= 5) {
+          const w = gcj02ToWgs84(r.location.lat, r.location.lng);
+          list.push({ name: r.title || q, addr: '📍 ' + (r.address || ''), lat: w.lat, lng: w.lng, dist: null });
+        }
+      }
+      if (near && near.data) list.push(...near.data.map(toWgs));
+      if (list.length) return renderSearchResults(list);
+
+      // 가까운 데 없으면 넓혀본다 (같은 도시 안이면 여기서 잡힌다)
+      if (g) {
+        const far = await jsonp(tencentSearchUrl(q, `nearby(${g.lat},${g.lng},50000,1)`));
+        if (far.status !== 0 && far.status !== 348) return fail(errMsg(far));
+        if (far.data && far.data.length) return renderSearchResults(far.data.map(toWgs));
+      }
+      fail('검색 결과가 없습니다');
+    } catch (e) {
+      fail('검색 오류: ' + (e && e.message ? e.message : '연결 실패'));
+    }
+  }
+
+  function renderSearchResults(data) {
+    searchResults = data;
+    const container = document.getElementById('search-results');
+    container.innerHTML = '';
+    document.getElementById('search-status').style.display = 'none';
+    data.forEach((place) => {
+      const el = document.createElement('div');
+      el.className = 'search-result-item focusable';
+      el.tabIndex = 0;
+      const dist = place.dist
+        ? (place.dist < 1000 ? place.dist + 'm' : (place.dist/1000).toFixed(1) + 'km') : '';
+      el.innerHTML = `
+        <div class="r-name">${place.name}</div>
+        <div class="r-addr">${place.addr}</div>
+        ${dist ? `<div class="r-dist">📍 ${dist}</div>` : ''}
+      `;
+      el.addEventListener('click', () => selectSearchResult(place));
+      container.appendChild(el);
+    });
+    searchFocusIndex = 0;
+    focusSearchResult(0);
+  }
+
+  function focusSearchResult(idx) {
+    const items = document.querySelectorAll('.search-result-item');
+    items.forEach(el => el.classList.remove('focused'));
+    if (items[idx]) { items[idx].classList.add('focused'); items[idx].focus(); searchFocusIndex = idx; }
+  }
+
+  function selectSearchResult(place) {
+    startNav({ name: place.name, addr: place.addr, lat: place.lat, lng: place.lng, icon: '📍' });
+  }
+
+  // ── 네비 시작 ──
+  // ══════════════════════════════════════════
+  //  안내 중에는 화면이 꺼지면 안 된다
+  // ══════════════════════════════════════════
+  //  ★★ 이게 없었다. 걷거나 운전하는 동안 화면이 잠들면
+  //    그리기(requestAnimationFrame)가 멈추고 위치 콜백도 느려진다.
+  //    실보행·주행 내비로서 치명적인 누락이었다.
+  //  ※ 잠금은 화면이 뒤로 갔다 오면 풀린다. 돌아올 때 다시 잡는다.
+  //  ※ 지원 안 하는 브라우저에서도 조용히 넘어간다 — 없다고 안내가 멈추면 안 된다.
+  let wakeLock = null;
+
+  async function keepScreenOn() {
+    try {
+      if (!('wakeLock' in navigator)) return;
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } catch (e) { /* 권한이 없거나 배터리 절약 중이면 그냥 못 잡는다 */ }
+  }
+  function letScreenSleep() {
+    try { if (wakeLock) wakeLock.release(); } catch (e) {}
+    wakeLock = null;
+  }
+  document.addEventListener('visibilitychange', () => {
+    // 안내 중에 돌아왔으면 다시 잡는다
+    if (document.visibilityState === 'visible' && watchId !== null && !wakeLock) keepScreenOn();
+  });
+
+  //  ══════════════════════════════════════════
+  //   자유 지도 — 목적지 없이 내 자리만 (2026-08-30)
+  //  ══════════════════════════════════════════
+  //  ★ 첫 화면이 이제 이것이다. 검색·즐겨찾기 없이 지도부터 보인다.
+  //    안내 화면(screen-nav)을 그대로 빌려 쓰되, 경로·턴 배너·정보 카드를 뺀다.
+  //    ← 로 홈(검색·즐겨찾기)에 들어가고, 홈의 '지도 보기' 로 돌아온다.
+  let freeMap = false;
+  function startMap() {
+    freeMap = true;
+    keepScreenOn();
+    selectedDest = null;
+    routeCoords = []; routeSteps = [];
+    const tb = document.getElementById('turn-banner');
+    if (tb) tb.classList.add('hidden');
+    const card = document.querySelector('.nav-card');
+    if (card) card.classList.add('hidden');
+    showScreen('screen-nav');
+    navFlags = { gpsLost: false, routeLoading: false, routeFailed: false, offline: false };
+    renderNavStatus();
+    if (!currentPos) fallbackPos();
+    mapView.centerLat = currentPos.lat;
+    mapView.centerLng = currentPos.lng;
+    mapView.zoom = 17; zoomTarget = 17;   // 안내(18)보다 한 단계 넓게 — 둘러보는 용도
+    mapView.pitch = 0; pitchTarget = 0;
+    startRenderLoop();
+    startTracking(null);   // 경로가 없으면 추적은 '내 자리 따라가기' 만 한다
+  }
+
+  function startNav(dest) {
+    //  자유 지도에서 숨겼던 것들을 되살린다
+    freeMap = false;
+    const tb0 = document.getElementById('turn-banner');
+    if (tb0) tb0.classList.remove('hidden');
+    const card0 = document.querySelector('.nav-card');
+    if (card0) card0.classList.remove('hidden');
+    saveRecentDest(dest);
+    keepScreenOn();
+    // ★ 안내 중이던 목적지를 남겨둔다.
+    //   앱을 껐다 켜면 페이지가 처음부터 다시 뜬다. 남겨두지 않으면
+    //   홈으로 돌아가 목적지를 다시 보내야 한다 —
+    //   걷다가 안경을 접거나 다른 걸 잠깐 보고 오면 매번 그렇게 된다.
+    try {
+      localStorage.setItem('navi.active', JSON.stringify({ dest, at: Date.now() }));
+    } catch (e) {}
+    selectedDest = dest;
+    document.getElementById('nav-dest-name').textContent = dest.name;
+    showScreen('screen-nav');
+    //  ★ 안내 화면의 상태는 전부 상태 줄 하나로 낸다.
+    //    showLoading 은 검색 화면에서만 쓴다 — 안내 중에 가운데를 덮으면
+    //    지도도 경로도 못 본다.
+    navFlags = { gpsLost: false, routeLoading: true, routeFailed: false, offline: false };
+    renderNavStatus();
+    if (!currentPos) fallbackPos();
+
+    // 현재위치 중심, 줌 16 (Meta 스타일 - 현재 위치 하단 1/3 고정)
+    mapView.centerLat = currentPos.lat;
+    mapView.centerLng = currentPos.lng;
+    mapView.zoom = 18; zoomTarget = 18;   // 걸으면서 보는 화면이라 가깝게 잡는다
+    // 탑뷰로 시작 → 경로 표시 후 쿼터뷰로 기울임
+    mapView.pitch = 0;
+    pitchTarget = 0;
+    setTimeout(() => { pitchTarget = 1; }, 900);
+
+    fetchRoute(currentPos, dest).then(route => {
+      if (route) {
+        routeCoords = route.geometry.coordinates.map(([lng, lat]) => ({ lat, lng }));
+        routeSteps = route.legs[0].steps;
+        currentStepIndex = 0;
+        // ★ 진행률을 재려면 경로를 한 번 훑어 누적거리를 만들어 둬야 한다
+        buildRouteIndex(route.duration);
+        prefetchRouteTiles();          // 앞으로 갈 길의 타일을 미리 받아둔다
+        buildRoadEdges();              // 경로가 지나는 도로의 가장자리
+        const distKm = (route.distance / 1000).toFixed(1);
+        const etaMin = Math.round(route.duration / 60);
+        document.getElementById('nav-eta').textContent = etaMin;
+        document.getElementById('nav-dist').textContent = distKm;
+        // 경로 캐시 저장
+        cacheRoute(dest, routeCoords, routeSteps);
+        updateStepUI(routeSteps[0]);
+        speak(`${dest.name}까지 ${distKm}킬로미터, 약 ${etaMin}분 소요됩니다. 안내를 시작합니다`);
+        // 경로 전체가 보이도록 줌 자동 조정
+        fitRouteBounds();
+      }
+      //  ★ 경로가 없는데 '계산 중' 을 내리면 화면이 텅 빈 채로 남는다.
+      //    못 받았으면 못 받았다고 말한다.
+      setNavFlag('routeLoading', false);
+      if (!routeCoords.length) setNavFlag('routeFailed', true);
+      startRenderLoop();
+      startTracking(dest);
+    }).catch(() => {
+      // 네트워크 실패 시 캐시 경로 복원
+      const cached = loadCachedRoute();
+      if (cached && cached.dest.name === dest.name) {
+        routeCoords = cached.coords;
+        routeSteps = cached.steps;
+        currentStepIndex = 0;
+        buildRouteIndex(0);   // 캐시에는 소요시간이 없다 — 속도로 어림한다
+        updateStepUI(routeSteps[0]);
+        fitRouteBounds();
+        setOffline(true);
+      }
+      setNavFlag('routeLoading', false);
+      if (!routeCoords.length) setNavFlag('routeFailed', true);
+      startRenderLoop();
+      startTracking(dest);
+    });
+  }
+
+  // 네비 시작 시 현재위치 중심, 줌 16 고정 (Meta 스타일: 주변 도로만 보임)
+  function fitRouteBounds() {
+    if (!currentPos) return;
+    mapView.centerLat = currentPos.lat;
+    mapView.centerLng = currentPos.lng;
+    mapView.zoom = 18; zoomTarget = 18; // 고정 줌 - 현재 주변만 크게 본다
+  }
+
+  // ══════════════════════════════════════════
+  //  텐센트 경로 안내 (중국 도로 데이터)
+  //  OSRM 공개 서버는 OpenStreetMap 기반이라 중국 도로가 부실하고
+  //  중국에서 접속도 불안정하다. 중국에서는 텐센트를 쓴다.
+  // ══════════════════════════════════════════
+
+  // 텐센트의 회전 설명(중국어) → OSRM 형식으로.
+  // ※ 순서 중요: '좌회전'보다 '좌전방'을 먼저 봐야 한다.
+  const TENCENT_ACT = [
+    [/掉头/,            'turn', 'uturn'],
+    [/左前方|靠左/,      'turn', 'slight left'],
+    [/右前方|靠右/,      'turn', 'slight right'],
+    [/左后方/,          'turn', 'sharp left'],
+    [/右后方/,          'turn', 'sharp right'],
+    [/左转|向左/,        'turn', 'left'],
+    [/右转|向右/,        'turn', 'right'],
+  ];
+
+  function fetchTencentRoute(from, dest) {
+    const mode = navProfile === 'driving' ? 'driving' : 'walking';
+    const f = wgs84ToGcj02(from.lat, from.lng);
+    const t = wgs84ToGcj02(dest.lat, dest.lng);
+    const url = `https://apis.map.qq.com/ws/direction/v1/${mode}/`
+              + `?from=${f.lat},${f.lng}&to=${t.lat},${t.lng}&key=${TENCENT_KEY}`;
+
+    return jsonp(url).then(d => {
+      if (d.status !== 0) throw new Error(d.message || '텐센트 경로 실패');
+      const r = d.result && d.result.routes && d.result.routes[0];
+      if (!r) throw new Error('경로 없음');
+
+      // 폴리라인은 차분 압축돼 온다 — 앞 값에 더해가며 복원
+      const pl = r.polyline.slice();
+      for (let i = 2; i < pl.length; i++) pl[i] = pl[i - 2] + pl[i] / 1000000;
+      const pts = [];
+      for (let i = 0; i + 1 < pl.length; i += 2) {
+        const w = gcj02ToWgs84(pl[i], pl[i + 1]);
+        pts.push([w.lng, w.lat]);          // OSRM과 같은 [경도, 위도] 순서
+      }
+      if (pts.length < 2) throw new Error('경로 좌표 부족');
+
+      const steps = (r.steps || []).map(st => {
+        const i0 = Array.isArray(st.polyline_idx) ? st.polyline_idx[0] : 0;
+        const loc = pts[Math.min(i0, pts.length - 1)];
+        const desc = (st.act_desc || '') + (st.dir_desc || '') + (st.instruction || '');
+        let type = 'turn', mod = 'straight';
+        for (const [re, ty, md] of TENCENT_ACT) {
+          if (re.test(desc)) { type = ty; mod = md; break; }
+        }
+        return {
+          distance: st.distance || 0,
+          duration: (st.duration || 0) * 60,   // 텐센트는 '분' 단위
+          name: st.road_name || '',
+          maneuver: { type, modifier: mod, location: loc },
+        };
+      });
+      steps.push({
+        distance: 0, duration: 0, name: '',
+        maneuver: { type: 'arrive', modifier: '', location: pts[pts.length - 1] },
+      });
+
+      return {
+        distance: r.distance,
+        duration: (r.duration || 0) * 60,     // 분 → 초
+        geometry: { coordinates: pts },
+        legs: [{ steps }],
+      };
+    });
+  }
+
+  // ══════════════════════════════════════════
+  //  국내 도보 경로 (TMAP 보행자 경로안내)
+  //  OSRM은 오픈스트리트맵 기반이라 국내 보도 데이터가 부실하다.
+  //  TMAP은 횡단보도·육교·지하보도까지 반영된 실제 보행 경로를 준다.
+  // ══════════════════════════════════════════
+
+  // TMAP 회전 코드 → OSRM 형식
+  //  ★ TMAP 회전 코드 → 우리 표현.
+  //    보행자와 자동차가 코드 체계를 공유하지만 자동차에만 있는 것이 많다
+  //    (고속도로 입출구·P턴). 규격서에서 확인한 것만 적는다.
+  const TMAP_TURN = {
+    11: ['turn', 'straight'],     12: ['turn', 'left'],         13: ['turn', 'right'],
+    14: ['turn', 'uturn'],        15: ['turn', 'pturn'],
+    16: ['turn', 'sharp left'],   17: ['turn', 'slight left'],
+    18: ['turn', 'slight right'], 19: ['turn', 'sharp right'],
+    43: ['turn', 'right'],        44: ['turn', 'left'],
+    // 고속도로·도시고속도로 입구
+    101: ['ramp', 'right'], 102: ['ramp', 'left'], 103: ['ramp', 'straight'],
+    111: ['ramp', 'right'], 112: ['ramp', 'left'], 113: ['ramp', 'straight'],
+    // 고속도로·도시고속도로 출구
+    104: ['exit', 'right'], 105: ['exit', 'left'], 106: ['exit', 'straight'],
+    114: ['exit', 'right'], 115: ['exit', 'left'], 116: ['exit', 'straight'],
+    117: ['turn', 'slight right'], 118: ['turn', 'slight left'],
+    200: ['depart', ''],
+    201: ['arrive', ''], 182: ['arrive', 'left'], 183: ['arrive', 'right'],
+    203: ['arrive', 'across'],
+  };
+
+  //  ══════════════════════════════════════════
+  //   TMAP 경로 — 걸을 때와 탈 때는 다른 API 다
+  //  ══════════════════════════════════════════
+  //  ★★ 전에는 자동차 모드면 TMAP 을 아예 안 쓰고 OSRM 공개 서버로 넘겼다.
+  //    그 서버는 한국 도로 정확도가 떨어지고 실시간 교통도, 한국어 안내도 없다.
+  //    차에서 써보니 "도보랑 똑같다" 고 느껴진 이유의 절반이 이것이었다.
+  //  ★ TMAP 에 자동차 경로안내가 따로 있다 (규격서 확인).
+  //    응답이 보행자와 **같은 GeoJSON 구조**라 해석기를 그대로 쓴다.
+  //    다른 건 주소와 보내는 값뿐이다.
+  function fetchTmapRoute(from, dest) {
+    const car = (navProfile === 'driving');
+
+    const url = car
+      ? 'https://apis.openapi.sk.com/tmap/routes?version=1&format=json'
+      : 'https://apis.openapi.sk.com/tmap/routes/pedestrian?version=1&format=json';
+
+    const body = {
+      startX: from.lng, startY: from.lat,
+      endX: dest.lng,   endY: dest.lat,
+      reqCoordType: 'WGS84GEO', resCoordType: 'WGS84GEO',
+      startName: '출발', endName: '도착',
+      sort: 'index',
+    };
+    if (car) {
+      body.searchOption = '00';   // 교통최적 + 추천 (티맵 기본값)
+      body.carType = 0;           // 승용차
+      body.trafficInfo = 'Y';     // 혼잡도도 함께 받는다
+    }
+
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'appKey': TMAP_KEY },
+      body: JSON.stringify(body),
+    }).then(async r => {
+      const t = await r.text();
+      if (!r.ok) throw new Error(`TMAP ${r.status}` + (t ? ' · ' + t.slice(0, 80) : ''));
+      if (!t.trim()) throw new Error('TMAP 이 빈 응답을 줌');
+      return JSON.parse(t);
+    }).then(parseTmapRoute);
+  }
+
+  /// TMAP 응답(보행자·자동차 공통 GeoJSON)을 우리 경로 형태로 옮긴다
+  function parseTmapRoute(d) {
+    const feats = d.features || [];
+    if (!feats.length) throw new Error(d.error && d.error.message || 'TMAP 경로 없음');
+
+    const head = (feats[0] && feats[0].properties) || {};
+    const pts = [];
+    const steps = [];
+
+    for (const f of feats) {
+      const pr = f.properties || {}, g = f.geometry || {};
+      if (g.type === 'LineString') {
+        // 경로선 — 중복 좌표는 건너뛴다
+        for (const c of g.coordinates) {
+          const last = pts[pts.length - 1];
+          if (!last || last[0] !== c[0] || last[1] !== c[1]) pts.push(c);
+        }
+      } else if (g.type === 'Point') {
+        const [type, mod] = TMAP_TURN[pr.turnType] || ['turn', 'straight'];
+        // ★ 자동차는 nextRoadName 이 훨씬 쓸모 있다 ("소공로" 처럼).
+        //   description 은 "…방면으로 좌회전 후 …190m 이동" 처럼 길어서
+        //   600×600 안경 화면에 안 들어간다.
+        const label = (pr.nextRoadName || pr.description || '')
+          .replace(/^,\s*/, '').trim();
+        steps.push({
+          distance: 0,        // 아래에서 다음 지점까지 거리로 채운다
+          duration: 0,
+          name: label,
+          maneuver: { type, modifier: mod, location: g.coordinates },
+        });
+      }
+    }
+    if (pts.length < 2) throw new Error('TMAP 경로 좌표 부족');
+
+    for (let i = 0; i < steps.length - 1; i++) {
+      const a = steps[i].maneuver.location, b = steps[i + 1].maneuver.location;
+      steps[i].distance = Math.round(
+        Math.hypot((b[1] - a[1]) * 111320, (b[0] - a[0]) * 111320 * Math.cos(a[1] * Math.PI / 180))
+      );
+    }
+    if (!steps.length || steps[steps.length - 1].maneuver.type !== 'arrive') {
+      steps.push({ distance: 0, duration: 0, name: '',
+        maneuver: { type: 'arrive', modifier: '', location: pts[pts.length - 1] } });
+    }
+
+    return {
+      distance: head.totalDistance || 0,
+      duration: head.totalTime || 0,      // TMAP 은 초 단위
+      fare: head.totalFare || 0,          // 통행료 (자동차만 온다)
+      geometry: { coordinates: pts },
+      legs: [{ steps }],
+    };
+  }
+
+  // 나라에 따라 경로 엔진을 고른다. 실패하면 OSRM으로 넘어간다.
+  function fetchRoute(from, dest) {
+    if (currentCountry() === 'cn') {
+      return fetchTencentRoute(from, dest).catch(e => {
+        console.warn('텐센트 경로 실패, OSRM으로 대체:', e && e.message);
+        return fetchOSRMRoute(from, dest);
+      });
+    }
+    return fetchTmapRoute(from, dest).catch(e => {
+      console.warn('TMAP 경로 실패, OSRM으로 대체:', e && e.message);
+      return fetchOSRMRoute(from, dest);
+    });
+  }
+
+  // ── OSRM (한국·그 외 / 텐센트 실패 시 대체) ──
+  //  ★★ 공개 OSRM 데모 서버는 **자동차 프로파일만** 호스팅한다.
+  //    'foot' 로 부르면 오류가 온다. 그런데 전에는 실패를 null 로 조용히
+  //    돌려줘서, 화면은 로딩만 사라지고 "경로 계산 중..." 이 영원히 남았다.
+  //    ※ 없는 것을 있는 척하지 않는다. 못 하면 못 한다고 던진다.
+  function fetchOSRMRoute(from, dest) {
+    const profile = 'driving';   // 이 서버가 가진 건 이것뿐이다
+    const url = `https://router.project-osrm.org/route/v1/${profile}/${from.lng},${from.lat};${dest.lng},${dest.lat}?overview=full&geometries=geojson&steps=true`;
+    return getJson(url).then(d => {
+      const r0 = d && d.routes && d.routes[0];
+      if (!r0) throw new Error('OSRM 경로 없음');
+      return r0;
+    });
+  }
+
+  // ── 이동 수단 선택 ──
+  function setProfile(mode) {
+    navProfile = mode;
+    //  ★ 색만으로 알리지 않는다. 밝은 데서는 색이 씻긴다.
+    //    선택된 쪽에 ● 를 붙여 글자로도 남긴다.
+    const foot = document.getElementById('btn-foot');
+    const drive = document.getElementById('btn-drive');
+    if (foot)  foot.textContent  = (mode === 'foot'    ? '● ' : '') + '🚶 도보';
+    if (drive) drive.textContent = (mode === 'driving' ? '● ' : '') + '🚗 드라이브';
+    // ★ 모드를 바꾸면 안내 상태를 비운다.
+    //   문턱·안내거리·소요시간 계산이 전부 달라지므로 옛 값이 남으면 안 된다.
+    spokenDistBucket = null; spokenBucketVal = null;
+    document.getElementById('btn-foot').classList.toggle('active-mode', mode === 'foot');
+    document.getElementById('btn-drive').classList.toggle('active-mode', mode === 'driving');
+    // 네비 카드 아이콘 업데이트
+    const icon = document.querySelector('.nav-card-row span');
+    if (icon) icon.textContent = mode === 'foot' ? '🚶' : '🚗';
+  }
+  document.getElementById('btn-foot').addEventListener('click', () => setProfile('foot'));
+  document.getElementById('btn-drive').addEventListener('click', () => setProfile('driving'));
+
+  // ── 타일 수학 ──
+  // ★ 지도 타일은 정수 줌에만 존재한다.
+  //   줌을 부드럽게 만들면서 소수(17.5)를 그대로 넘겼더니
+  //   없는 타일을 부르게 되어 도로가 통째로 사라졌다.
+  //   타일 계산은 정수로 하고, 소수부는 캔버스를 확대해 표현한다.
+  function tileZ() { return Math.round(mapView.zoom); }
+  function zoomScale() { return Math.pow(2, mapView.zoom - tileZ()); }
+
+  function latLngToTilePixel(lat, lng, z) {
+    const n = Math.pow(2, z);
+    const tx = (lng + 180) / 360 * n;
+    const latRad = lat * Math.PI / 180;
+    const ty = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
+    return { tx, ty };
+  }
+
+  // ══════════════════════════════════════════
+  //  지도를 진행 방향으로 돌린다
+  // ══════════════════════════════════════════
+  //  ★★ 전에는 **북쪽 고정**이었다. 나침반 값은 현재 위치의 부채꼴을
+  //    돌리는 데만 썼다. 그런데 화면을 쿼터뷰로 기울여 놓았으므로
+  //    '화면 위쪽 = 앞' 으로 읽히는데, 실제로는 북쪽이었다.
+  //    남쪽으로 가면 경로선이 발밑으로 뻗는다.
+  //    안경이 머리에 붙어 있는 만큼 이건 바로 방향 착각이 된다.
+  //
+  //  ★ 진행 방향이 화면 위로 오게 돌린다 (티맵·네이버와 같은 방식).
+  //  ※ 갑자기 홱 돌면 멀미가 난다. 매 프레임 조금씩 따라가게 한다.
+  //  ※ 방향을 모를 때는 돌리지 않는다 — 엉뚱하게 돌아간 지도는
+  //    안 돌아간 지도보다 나쁘다.
+  let viewRot = 0;        // 지금 화면이 돌아간 각(라디안)
+
+  //  ══════════════════════════════════════════
+  //   ★★ 여기가 "목적지가 좌우로 계속 움직인다" 의 범인이었다
+  //  ══════════════════════════════════════════
+  //   지도 회전을 facingDeg() 에 걸었다. 그런데 그 값은 **나침반이 우선**이고,
+  //   안경 나침반은 **머리가 향한 방향**이다.
+  //   즉 고개를 조금만 돌려도 지도가 통째로 돌았다.
+  //   목적지 핀도, 경로선도 같이 흔들린다.
+  //
+  //   ★ 지도를 돌리는 기준은 **가는 방향(GPS course)** 이어야 한다.
+  //     티맵도 네이버도 차가 가는 방향으로 돌지, 운전자가 보는 쪽으로 안 돈다.
+  //   ※ 현재 위치 부채꼴은 그대로 나침반을 쓴다 — 그건 '내가 어디를 보는가' 라서
+  //     머리 방향이 맞다. 두 값의 쓰임이 다르다.
+  //   ※ 가는 방향을 모르면(서 있으면) **안 돌린다.** 서 있을 때 도는 지도는
+  //     방향을 알려주는 게 아니라 어지럽게 만들 뿐이다.
+  function travelDeg() {
+    if (currentHeading == null) return null;
+    if (Date.now() - lastGpsHeadingAt > 5000) return null;
+    return currentHeading;
+  }
+
+  function updateViewRot() {
+    const deg = travelDeg();
+    if (deg == null) return;                 // 서 있으면 그대로 둔다
+    const target = -deg * Math.PI / 180;
+    let d = target - viewRot;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    //  ★ 잔떨림은 무시한다. GPS 방향은 3~5도씩 흔들린다 —
+    //    그대로 따라가면 지도가 미세하게 계속 떤다.
+    if (Math.abs(d) < 0.09) return;           // 약 5도
+    viewRot += d * 0.06;                      // 천천히 (전에는 0.12 라 홱 돌았다)
+  }
+
+  // ── 원근 투영 (탑뷰 → 쿼터뷰) ──
+  // 현재 위치(POS_X, POS_Y)를 기준점으로, 앞쪽(위)일수록 압축·수렴
+  function proj(x, y) {
+    const p = mapView.pitch;
+    if (p < 0.005) return { x, y, ok: true };
+    const d = POS_Y - y;                  // 앞쪽 거리 (양수 = 전방)
+    const denom = 1 + d * PITCH_K * p;
+    if (denom < 0.15) return { x, y, ok: false };  // 지평선 너머 = 클립
+    return {
+      x: POS_X + (x - POS_X) / denom,
+      y: POS_Y - d / denom,
+      ok: true,
+    };
+  }
+
+  function latLngToPixel(lat, lng) {
+    const { tx: cx, ty: cy } = latLngToTilePixel(mapView.centerLat, mapView.centerLng, tileZ());
+    const { tx, ty } = latLngToTilePixel(lat, lng, tileZ());
+    // 현재위치가 POS_X, POS_Y (하단 1/3)에 오도록 오프셋
+    let fx = (tx - cx) * TILE_SIZE + POS_X;
+    let fy = (ty - cy) * TILE_SIZE + POS_Y;
+    // ★ 내 자리를 중심으로 돌린다. 기울이기(proj)는 그 뒤에 한다 —
+    //   순서가 바뀌면 원근이 엉뚱한 축으로 걸린다.
+    if (viewRot) {
+      const dx = fx - POS_X, dy = fy - POS_Y;
+      const c = Math.cos(viewRot), sn = Math.sin(viewRot);
+      fx = POS_X + dx * c - dy * sn;
+      fy = POS_Y + dx * sn + dy * c;
+    }
+    return proj(fx, fy);
+  }
+
+  // ── 렌더 루프 ──
+  function startRenderLoop() {
+    if (animFrame) cancelAnimationFrame(animFrame);
+    //  ★ 60fps 로 다시 그릴 이유가 없다.
+    //    위치는 1~5초에 한 번 오고, 사람이 보는 화면이지 게임이 아니다.
+    //    ※ 안경은 발열에 민감하다. 뜨거워지면 화면 밝기부터 떨어지고,
+    //      그러면 오늘 한 가시성 작업이 통째로 무의미해진다.
+    let lastDrawAt = 0;
+    const DRAW_MS = 50;                 // 초당 20번
+    function loop() {
+      animFrame = requestAnimationFrame(loop);
+      const now = performance.now();
+      //  카메라가 움직이는 중(줌·기울이기 전환)에는 부드럽게 보여야 하므로 다 그린다
+      const moving = Math.abs(mapView.zoom - zoomTarget) > 0.002
+                  || Math.abs(mapView.pitch - pitchTarget) > 0.001;
+      if (!moving && now - lastDrawAt < DRAW_MS) return;
+      lastDrawAt = now;
+
+      pulsePhase = (pulsePhase + 0.025) % 1;
+      updateViewRot();
+      // 카메라 각도 부드럽게 전환 (탑뷰 → 쿼터뷰)
+      // 줌도 부드럽게 따라간다
+      //  ★ 20fps 로 낮춘 뒤 줌이 굼떠졌다. 프레임이 줄었으면 한 프레임에
+      //    더 많이 움직여야 같은 시간에 도착한다. (0.18 × 60fps ≒ 0.4 × 20fps)
+      if (Math.abs(mapView.zoom - zoomTarget) > 0.002) {
+        mapView.zoom += (zoomTarget - mapView.zoom) * 0.4;
+      } else {
+        mapView.zoom = zoomTarget;
+      }
+      if (Math.abs(mapView.pitch - pitchTarget) > 0.001) {
+        mapView.pitch += (pitchTarget - mapView.pitch) * 0.12;
+      } else {
+        mapView.pitch = pitchTarget;
+      }
+      renderMap();
+    }
+    loop();
+  }
+  function stopRenderLoop() {
+    if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+  }
+
+  // ── Canvas 렌더링 ──
+  function renderMap() {
+    ctx.clearRect(0, 0, 600, 600);
+
+    const z = tileZ();
+    const { tx: cx, ty: cy } = latLngToTilePixel(mapView.centerLat, mapView.centerLng, z);
+
+    // 소수 줌은 화면을 확대해서 표현한다 (타일은 정수 줌만 있다)
+    ctx.save();
+    const sc = zoomScale();
+    if (Math.abs(sc - 1) > 0.001) {
+      ctx.translate(POS_X, POS_Y);
+      ctx.scale(sc, sc);
+      ctx.translate(-POS_X, -POS_Y);
+    }
+
+    //  ★ 도로 이름을 고르려면 경로가 화면 어디에 있는지 먼저 알아야 한다.
+    //    도로를 그리기 전에 만들어 둔다.
+    //  ※ 경로점을 다 쓰지 않고 띄엄띄엄(최대 80개) 쓴다 —
+    //    이름 고르는 데에는 그 정도 정밀도면 충분하고, 매 프레임 도는 계산이다.
+    routeScreen = [];
+    if (routeCoords.length > 1) {
+      const step = Math.max(1, Math.ceil(routeCoords.length / 80));
+      for (let i = 0; i < routeCoords.length; i += step) {
+        const p = latLngToPixel(routeCoords[i].lat, routeCoords[i].lng);
+        if (p.ok !== false) routeScreen.push(p);
+      }
+    }
+
+    // 배경 지도 — 칼라 타일이 우선, 안 되면 예전 벡터 흰 선
+    if (USE_RASTER) drawRasterMap(cx, cy);
+    else drawRoads(cx, cy);
+
+    // 경로선 (Meta 스타일 - 얇고 선명한 파란선)
+    //  ══════════════════════════════════════════
+    //   ★ 지나온 길은 지운다
+    //  ══════════════════════════════════════════
+    //   전에는 출발점부터 도착점까지 통째로 그렸다. 그래서 이미 지나온 구간이
+    //   내 뒤에 그대로 남아 있었다.
+    //   ※ 좁은 화면(20°)에서 **이미 끝난 정보는 방해**다. 앞으로 갈 길과
+    //     뒤에 남은 선이 같은 굵기·같은 색이면 어느 쪽이 앞인지 헷갈린다.
+    //   ※ alongNow(경로 위 내 자리)는 이미 재고 있었다. 그 뒤쪽만 안 그리면 된다.
+    const drawCoords = remainingRouteCoords();
+    if (drawCoords.length > 1) {
+      // ★ 경로선은 화면에서 가장 중요한 선이다. 도로보다 확실히 위에 보여야 한다.
+      //   외곽 번짐 (넓게, 그러나 도로와 섞이지 않게 색을 확실히)
+      ctx.beginPath();
+      //  ★ 바깥 띠는 '경로가 지나가는 폭' 을 알려주는 몸통이다.
+      //    도로가 밝아진 만큼 이것도 같이 올린다 (0.40 → 0.60 ≈ 3,000 nit).
+      ctx.strokeStyle = 'rgba(60,255,140,0.60)';
+      ctx.lineWidth = 22; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      let started = false;
+      drawCoords.forEach(pt => {
+        const p = latLngToPixel(pt.lat, pt.lng);
+        if (!p.ok) { started = false; return; }
+        started ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+        started = true;
+      });
+      ctx.stroke();
+
+      // 메인선 (굵고 선명)
+      ctx.beginPath();
+      // ★ 파랑은 흰 도로 위에 얹히면 빛이 섞여 묻혔다 (더하기 화면).
+      //   초록은 흰색과 가장 멀리 떨어져 있어 겹쳐도 구분된다.
+      ctx.strokeStyle = '#3cff8c';
+      ctx.lineWidth = 13; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      //  ★ 글로우(shadowBlur)를 뺐다.
+      //    불투명 화면에서는 강조지만 **더하기 화면에서는 빛을 주변에 퍼뜨려
+      //    경계를 흐린다.** 밝아 보이지만 덜 또렷해진다.
+      //    강조는 번짐이 아니라 굵기로 한다 (11 → 13px).
+      started = false;
+      drawCoords.forEach(pt => {
+        const p = latLngToPixel(pt.lat, pt.lng);
+        if (!p.ok) { started = false; return; }
+        started ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+        started = true;
+      });
+      ctx.stroke();
+    }
+
+    //  ── 도로 가장자리 (경로 주변 도로의 실제 폭) ──
+    //  ※ 경로선보다 **먼저** 그린다. 경로가 위에 얹혀야 어느 게 갈 길인지 읽힌다.
+    if (roadEdges.length) {
+      ctx.save();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      //  ※ 점선으로 그려봤다가 되돌렸다. 어림값이라는 걸 모양으로 알리려 했는데,
+      //    더하기 화면에서 촘촘한 점선은 번져서 **흐린 실선**으로 보인다 —
+      //    뜻은 전달 안 되고 선명함만 잃는다.
+      //    게다가 접근 구간이 이미 노란 점선이라 점선이 둘이면 헷갈린다.
+      //  ★ 어림값이라는 사실은 화면에서 알릴 게 아니라 값을 잘 잡아서 줄인다.
+      ctx.beginPath();
+      for (const e of roadEdges) {
+        const p = latLngToPixel(e.a.lat, e.a.lng);
+        const q = latLngToPixel(e.b.lat, e.b.lng);
+        if (p.ok === false || q.ok === false) continue;
+        if (p.x < -200 && q.x < -200) continue;
+        ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    //  ── 접근 구간 점선 ──
+    //  ※ 경로선 **다음에** 그린다. 경로선 아래로 깔면 겹치는 부분에서
+    //    초록에 묻혀 안 보인다. 다만 현재 위치보다는 먼저 그린다.
+    if (linkTarget && currentPos) {
+      const a = latLngToPixel(currentPos.lat, currentPos.lng);
+      const b = latLngToPixel(linkTarget.lat, linkTarget.lng);
+      if (a.ok !== false && b.ok !== false) {
+        ctx.save();
+        //  ★ 점선 간격을 넉넉히 (12/10). 더하기 화면에서 촘촘한 점선은
+        //    번져서 실선으로 보인다 — 그러면 '길' 로 오해한다.
+        ctx.setLineDash([12, 10]);
+        ctx.lineCap = 'butt';
+        //  경로선(초록)과 다른 색이어야 '길이 아니다' 가 읽힌다.
+        ctx.strokeStyle = '#ffd27a';
+        ctx.lineWidth = 7;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        //  붙어야 할 지점에 작은 고리를 찍는다 — 선만 있으면 어디까지인지 모른다
+        ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(b.x, b.y, 9, 0, Math.PI * 2);
+        ctx.lineWidth = 4; ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    // 목적지 핀 or 화면 밖이면 가장자리 방향 인디케이터
+    if (selectedDest) {
+      const { x, y } = latLngToPixel(selectedDest.lat, selectedDest.lng);
+      const margin = 24;
+      const onScreen = x > margin && x < 600-margin && y > margin && y < 600-margin;
+      if (onScreen) {
+        drawDestPin(x, y);
+      } else {
+        drawDestEdgeIndicator(x, y);
+      }
+    }
+
+    //  ══════════════════════════════════════════
+    //   현재 위치 — 경로에 붙어 있으면 경로 위에 그린다
+    //  ══════════════════════════════════════════
+    //  ★★ "경로에서 내 아이콘이 1~2cm 우측으로 벗어난다" 의 원인.
+    //    GPS 는 도심에서 몇 미터씩 튄다. 그 값을 그대로 찍으니
+    //    선 옆에 나란히 떠 있게 된다.
+    //  ★ 이미 '경로 위 내 자리(alongNow)' 를 재고 있다. 붙어 있을 때는
+    //    그 자리에 그린다. GPS 원값이 아니라 **경로 위로 맞춰 그리는 것**이다.
+    //  ※ 이건 경로를 도로에 끌어다 붙이는 것(스냅)과 다르다.
+    //    남의 데이터를 건드리는 게 아니라, **내 위치를 내 경로 위에** 놓는 것이다.
+    //    차량 내비가 전부 이렇게 한다.
+    //  ※ 벗어났으면 맞추지 않는다. 벗어난 것을 감추면 '내가 지금 경로 밖' 이라는
+    //    사실 자체가 안 보인다 — 그게 훨씬 나쁘다. 노란 점선이 그때 나온다.
+    if (currentPos) {
+      let showAt = currentPos;
+      if (!linkTarget && routeCoords.length > 1 && routeCum.length) {
+        const onLine = pointAlongRoute(alongNow);
+        if (onLine) showAt = onLine;
+      }
+      const { x, y } = latLngToPixel(showAt.lat, showAt.lng);
+      drawCurrentPos(x, y);
+    }
+
+    ctx.restore();   // 소수 줌 확대 해제
+  }
+
+  function drawDestPin(x, y) {
+    // 물방울 핀 (구글맵 스타일)
+    ctx.save();
+    ctx.translate(x, y);
+    // 그림자
+    ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 3;
+    // 핀 몸통 (원)
+    ctx.beginPath(); ctx.arc(0, -14, 11, 0, Math.PI*2);
+    ctx.fillStyle = '#e8333a'; ctx.fill();
+    // 핀 꼭지
+    ctx.beginPath();
+    ctx.moveTo(-7, -5); ctx.lineTo(7, -5); ctx.lineTo(0, 6);
+    ctx.closePath(); ctx.fillStyle = '#e8333a'; ctx.fill();
+    ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    // 핀 내부 흰 원
+    ctx.beginPath(); ctx.arc(0, -14, 5, 0, Math.PI*2);
+    ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.restore();
+  }
+
+  // 목적지가 화면 밖일 때 가장자리 방향 인디케이터
+  function drawDestEdgeIndicator(destX, destY) {
+    const cx = 300, cy = 300; // 화면 중심
+    const pad = 20; // 가장자리 여백
+    const W = 600, H = 600;
+
+    // 화면 중심 → 목적지 방향 각도
+    const angle = Math.atan2(destY - cy, destX - cx);
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+
+    // 화면 가장자리 교차점 계산
+    let ex, ey;
+    const tx = cos > 0 ? (W - pad - cx) / cos : cos < 0 ? -(cx - pad) / cos : Infinity;
+    const ty = sin > 0 ? (H - pad - cy) / sin : sin < 0 ? -(cy - pad) / sin : Infinity;
+    const t = Math.min(Math.abs(tx), Math.abs(ty));
+    ex = cx + cos * t;
+    ey = cy + sin * t;
+
+    // 클램프
+    ex = Math.max(pad, Math.min(W - pad, ex));
+    ey = Math.max(pad, Math.min(H - pad, ey));
+
+    ctx.save();
+    ctx.translate(ex, ey);
+    ctx.rotate(angle);
+
+    // 삼각형 화살표
+    const sz = 11;
+    ctx.beginPath();
+    ctx.moveTo(sz, 0);
+    ctx.lineTo(-sz * 0.7, -sz * 0.6);
+    ctx.lineTo(-sz * 0.7,  sz * 0.6);
+    ctx.closePath();
+    ctx.fillStyle = '#e8333a';
+    ctx.shadowColor = 'rgba(232,51,58,0.7)';
+    ctx.shadowBlur = 8;
+    ctx.fill();
+
+    // 흰 테두리
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    ctx.restore();
+  }
+
+  function drawCurrentPos(x, y) {
+    // ★ 방향 부채꼴 — 내가 어느 쪽을 보고 있는지.
+    //   이게 없으면 점만 찍혀서 어느 쪽으로 첫걸음을 떼야 할지 알 수 없다.
+    //  ══════════════════════════════════════════
+    //   ★ 드라이브 모드에서는 **항상 화면 위**를 가리킨다
+    //  ══════════════════════════════════════════
+    //   지도는 이미 가는 방향으로 돌아가 있다. 그러면 '내가 가는 쪽' = 화면 위다.
+    //   그런데 부채꼴은 나침반(=머리 방향)을 따라가고 있었다.
+    //   차에서 옆을 흘깃 보면 화살표만 옆으로 돌아간다 — 지도와 따로 논다.
+    //   차량 내비는 전부 이렇게 하지 않는다. 차는 앞으로 가고, 화살표도 위다.
+    //
+    //   ※ 걷기는 다르다. 걸을 때는 서서 두리번거리며 '어느 쪽으로 첫걸음을
+    //     뗄까' 를 정한다. 그때는 머리 방향이 진짜 정보다. 그래서 남겨둔다.
+    //     같은 부품이지만 두 모드에서 쓰임이 다르다 — 지도(무엇을 그리나)는
+    //     같아야 하지만, 이건 '내가 어디를 보는가' 라 성격이 다르다.
+    if (navProfile === 'driving') {
+      drawFacingFan(x, y, -Math.PI / 2);   // 화면 위쪽 고정
+      drawPosDot(x, y);
+      return;
+    }
+
+    const deg = facingDeg();
+    if (deg == null) {
+      // ★ 방향을 못 얻었으면 그렇다고 보여준다.
+      //   아무것도 안 그리면 '방향이 없는 것' 과 '고장난 것' 을 구분할 수 없다.
+      ctx.save();
+      ctx.beginPath(); ctx.arc(x, y, 30, 0, Math.PI * 2);
+      ctx.setLineDash([5, 5]);
+      ctx.strokeStyle = '#9ad8ff';   // 더하기 화면에서 반투명은 '연하게' 가 아니라 '지우기' 다
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (deg != null) {
+      // ★ 지도가 진행 방향으로 돌아갔으므로, 부채꼴도 같은 만큼 돌려야
+      //   화면에서 위를 가리킨다. (안 돌리면 지도와 부채꼴이 따로 논다)
+      const rad = (deg - 90) * Math.PI / 180 + viewRot;
+      drawFacingFan(x, y, rad);
+    }
+    drawPosDot(x, y);
+  }
+
+  /// 방향 부채꼴 하나만 그린다 (각도는 화면 기준 라디안)
+  function drawFacingFan(x, y, rad) {
+    {
+      const spread = 0.42;                       // 부채꼴 폭 (약 48도)
+      const R = 46;
+      const g = ctx.createRadialGradient(x, y, 8, x, y, R);
+      g.addColorStop(0, 'rgba(150,215,255,0.95)');
+      g.addColorStop(1, 'rgba(106,77,255,0)');
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.arc(x, y, R, rad - spread, rad + spread);
+      ctx.closePath();
+      ctx.fillStyle = g;
+      ctx.fill();
+
+      // 끝에 화살촉 하나 — 부채꼴만으로는 방향이 덜 또렷하다
+      const ax = x + Math.cos(rad) * (R - 6);
+      const ay = y + Math.sin(rad) * (R - 6);
+      ctx.save();
+      ctx.translate(ax, ay);
+      ctx.rotate(rad);
+      ctx.beginPath();
+      ctx.moveTo(9, 0); ctx.lineTo(-6, -6); ctx.lineTo(-6, 6);
+      ctx.closePath();
+      ctx.fillStyle = '#dff2ff';     // 화살촉은 가장 밝게 — 방향이 먼저 읽혀야 한다
+      ctx.fill();
+      ctx.restore();
+    }
+
+  }
+
+  /// 현재 위치 점 (펄스 + 흰 링 + 안쪽 원)
+  function drawPosDot(x, y) {
+    //  ★★ 경로선(초록) 위에 파란 점이 겹치면 둘 다 안 보인다.
+    //    더하기 화면에서는 색이 겹치면 밝기가 더해져 뭉개진다.
+    //  ★ 밑을 **지우고** 그린다. destination-out 은 이미 그린 것을 지운다 —
+    //    더하기 화면에서 지워진 곳은 '검정 = 투명' 이라 완전히 비어 보인다.
+    //    그래서 점 둘레에 진짜 빈 고리가 생기고, 점이 선에서 확실히 떨어진다.
+    //  ※ 반투명으로 덮는 방법은 안 된다 (밝기가 더해질 뿐이다).
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath(); ctx.arc(x, y, 17, 0, Math.PI * 2);
+    ctx.fillStyle = '#000'; ctx.fill();
+    ctx.restore();
+
+    //  ★★ "글로우된 파란색이 뭐냐" — 이것이었다. 계속 커졌다 사라지는 펄스 링.
+    //    불투명 화면에서는 '여기 내가 있다' 는 표시지만,
+    //    더하기 화면에서는 **움직이는 파란 안개**다. 지도를 가리고 시선을 뺏는다.
+    //  ※ 내 위치는 화면에서 늘 같은 자리(아래 1/3)에 있다. 찾을 필요가 없다.
+    //    찾을 필요가 없는 것을 깜빡여서 알릴 이유도 없다.
+
+    //  ══════════════════════════════════════════
+    //   내 위치 — 흰 링 + 안쪽 그라데이션
+    //  ══════════════════════════════════════════
+    //  ★ 흰색만 쓰면 도로(회색·흰색)에 묻히고, 색만 쓰면 경로(초록)와 겨룬다.
+    //    그래서 **둘을 나눈다** — 바깥은 흰 링(어디서나 보인다),
+    //    안쪽은 파랑→보라 그라데이션(무엇인지 알린다).
+    //  ※ 예전에 파랑이 초록에 묻혔던 건 밑을 안 지웠기 때문이다.
+    //    지금은 둘레를 실제로 지우므로(destination-out) 색이 섞이지 않는다.
+    //    구조로 해결됐으니 색은 자유롭게 고를 수 있다.
+    //  ※ 링은 흰색 하나로 충분하다. 더 두르면 그만큼 빛이 퍼진다.
+    ctx.beginPath(); ctx.arc(x, y, 12.5, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3; ctx.stroke();
+
+    const core = ctx.createRadialGradient(x - 3.5, y - 3.5, 1, x, y, 11);
+    core.addColorStop(0, '#bff4ff');     // 밝은 하늘 — 위쪽에서 빛이 드는 느낌
+    core.addColorStop(0.55, '#4aa8ff');
+    core.addColorStop(1, '#6a4dff');     // 보라 — 가장자리로 갈수록 깊게
+    ctx.beginPath(); ctx.arc(x, y, 11, 0, Math.PI * 2);
+    ctx.fillStyle = core; ctx.fill();
+  }
+
+  // ── 줌 (키보드 전용) ──
+  // 0.5 단계로 목표만 바꾸고, 실제 줌은 매 프레임 그리로 다가간다
+  //  ★ 0.5 단계로는 두 번 눌러야 타일이 바뀐다 — '눌렀는데 반응이 없다' 로 느껴진다.
+  //    한 단계씩 움직이게 해서 한 번 누르면 눈에 띄게 바뀌도록 한다.
+  function zoomIn()  { zoomTarget = Math.min(ZOOM_MAX, Math.round(zoomTarget) + 1); }
+  function zoomOut() { zoomTarget = Math.max(ZOOM_MIN, Math.round(zoomTarget) - 1); }
+
+  // ── 경로 이탈 감지 ──
+  function distToRoute(lat, lng) {
+    if (routeCoords.length < 2) return Infinity;
+    let minD = Infinity;
+    for (let i = 0; i < routeCoords.length - 1; i++) {
+      const d = pointToSegmentDist(lat, lng, routeCoords[i], routeCoords[i+1]);
+      if (d < minD) minD = d;
+    }
+    return minD;
+  }
+  // ══════════════════════════════════════════
+  //  경로 위 어디까지 왔는가 — 진행률
+  // ══════════════════════════════════════════
+  //  ★★ 차에서 써보고 알았다. 전에는 '다음 회전점까지 직선거리' 만 봤다.
+  //
+  //    시속 60km 면 초당 17m 다. 위치가 5초마다 오면 한 번에 83m 를 건너뛴다.
+  //    그런데 스텝 전진 조건이 '25m 안에 들어오면' 이었다 —
+  //    회전점을 지나가도 그 창에 한 번도 안 걸려서 안내가 영영 안 넘어갔다.
+  //    남은 거리도 직선이라 화면의 경로선과 눈에 띄게 어긋났다.
+  //
+  //  ★ 그래서 현재 위치를 **경로선에 투영**한다.
+  //    '경로의 몇 미터 지점에 있는가' 하나를 알면
+  //    지나쳤는지 · 다음 회전까지 몇 m · 총 몇 m 남았는지가 전부 나온다.
+  //    창을 통과했는지에 기대지 않으므로 속도와 무관하다.
+  let routeCum = [];      // 각 경로점까지의 누적 거리(m)
+  let stepAlong = [];     // 각 안내지점이 경로의 몇 m 지점인가
+  let alongNow = 0;       // 지금 내가 있는 지점(m)
+  let projHint = 0;       // 지난번에 붙었던 자리 (여기 근처부터 찾는다)
+  let routeTotalM = 0;
+  let routeDurationS = 0; // 경로가 알려준 총 소요(초)
+
+  function metersBetween(a, b) {
+    const dy = (b.lat - a.lat) * 111320;
+    const dx = (b.lng - a.lng) * 111320 * Math.cos(a.lat * Math.PI / 180);
+    return Math.hypot(dx, dy);
+  }
+
+  /// 경로가 새로 들어오면 한 번 계산해 둔다
+  function buildRouteIndex(durationSec) {
+    routeCum = [0];
+    for (let i = 1; i < routeCoords.length; i++) {
+      routeCum[i] = routeCum[i - 1] + metersBetween(routeCoords[i - 1], routeCoords[i]);
+    }
+    routeTotalM = routeCum.length ? routeCum[routeCum.length - 1] : 0;
+    routeDurationS = durationSec || 0;
+    projHint = 0;
+    alongNow = 0;
+    // 안내지점을 '경로 위 거리' 로 옮겨둔다. 여기서는 전체를 훑어야 한다.
+    stepAlong = routeSteps.map(st => {
+      //  ★ 스텝에 회전 지점이 없을 수 있다 (옛 버전이 남긴 캐시 경로 등).
+      //    여기서 터지면 **안내가 통째로 죽는다** — 화면은 '경로 계산 중' 에서
+      //    영영 멈춘다. 한 스텝 못 읽는 것보다 그게 훨씬 나쁘다.
+      const loc = st && st.maneuver && st.maneuver.location;
+      if (!loc) return 0;
+      return projectOnRoute(loc[1], loc[0], 0, routeCoords.length - 1).along;
+    });
+  }
+
+  /// 한 점을 경로선에 투영한다 → { along(m), offset(m), idx }
+  //  ※ 전체를 매번 훑지 않는다. 지난 자리 근처만 본다 —
+  //    회차로처럼 경로가 자기 위로 겹칠 때 엉뚱한 곳에 붙는 것도 이걸로 막는다.
+  //  ※ 거리는 그 점 기준 평면 근사로 잰다. 경도에 cos(위도) 를 곱해야
+  //    가로세로 자가 같아진다 (전에는 안 곱해서 투영점이 치우쳤다).
+  function projectOnRoute(lat, lng, from, to) {
+    if (routeCoords.length < 2) return { along: 0, offset: Infinity, idx: 0 };
+    const lo = (from != null) ? from : Math.max(0, projHint - 30);
+    const hi = (to != null) ? to : Math.min(routeCoords.length - 1, projHint + 600);
+    const kx = 111320 * Math.cos(lat * Math.PI / 180), ky = 111320;
+
+    let best = { along: routeCum[lo] || 0, offset: Infinity, idx: lo };
+    for (let i = lo; i < hi; i++) {
+      const a = routeCoords[i], b = routeCoords[i + 1];
+      const ax = (a.lng - lng) * kx, ay = (a.lat - lat) * ky;
+      const bx = (b.lng - lng) * kx, by = (b.lat - lat) * ky;
+      const dx = bx - ax, dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      let t = 0;
+      if (len2 > 0) t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len2));
+      const px = ax + t * dx, py = ay + t * dy;
+      const off = Math.hypot(px, py);
+      if (off < best.offset) {
+        best = { along: (routeCum[i] || 0) + Math.sqrt(len2) * t, offset: off, idx: i };
+      }
+    }
+    return best;
+  }
+
+  /// 거리를 사람이 읽는 꼴로
+  //  ══════════════════════════════════════════
+  //   경로까지 데려다주는 점선 (접근 구간)
+  //  ══════════════════════════════════════════
+  //  ★★ 왜 필요한가
+  //    건물 안이나 주차장에서 안내를 켜면 나는 도로 위에 있지 않다.
+  //    그러면 화면에 **경로선은 저 멀리 떠 있고 나는 아무 데나 찍혀** 있다.
+  //    "어느 쪽으로 나가야 하나" 를 화면이 말해주지 않는다.
+  //    티맵·네이버가 이 구간을 점선으로 이어주는 게 그래서다.
+  //
+  //  ※ 실선으로 긋지 않는다. 이 구간은 **길이 아니다** —
+  //    건물을 통과하거나 담을 넘는 직선일 수 있다.
+  //    실선으로 그으면 "이리로 가라" 로 읽힌다. 점선은 "저기로 붙어라" 다.
+  //    모양이 곧 뜻이므로 여기서 아끼면 안 된다.
+  let linkTarget = null;    // {lat,lng} — 경로 위 붙어야 할 지점
+  let linkDistM  = 0;       // 거기까지 직선 거리
+
+  /// 아직 안 지난 구간만 돌려준다. 지나온 뒤쪽은 버린다.
+  /// ※ 안내를 시작하기 전(alongNow=0)에는 경로 전체가 그대로 나온다.
+  function remainingRouteCoords() {
+    if (routeCoords.length < 2) return routeCoords;
+    if (!routeCum.length || alongNow <= 0) return routeCoords;
+    //  내가 있는 지점을 첫 점으로 삼는다 — 안 그러면 선이 저만치서 시작해
+    //  '경로가 끊겼나' 로 보인다.
+    const head = pointAlongRoute(alongNow);
+    const out = head ? [head] : [];
+    for (let i = 0; i < routeCoords.length; i++) {
+      if (routeCum[i] > alongNow) out.push(routeCoords[i]);
+    }
+    return out.length > 1 ? out : routeCoords;
+  }
+
+  /// 경로를 따라 mAlong 미터 지점의 좌표. 없으면 null.
+  function pointAlongRoute(mAlong) {
+    if (routeCoords.length < 2 || !routeCum.length) return null;
+    const m = Math.max(0, Math.min(mAlong, routeTotalM));
+    let i = 1;
+    while (i < routeCum.length - 1 && routeCum[i] < m) i++;
+    const segLen = routeCum[i] - routeCum[i-1];
+    const t = segLen > 0 ? (m - routeCum[i-1]) / segLen : 0;
+    const a = routeCoords[i-1], b = routeCoords[i];
+    return { lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t };
+  }
+
+  function fmtDist(m) {
+    if (m >= 1000) return (m / 1000).toFixed(1) + 'km';
+    // ★ 차에서는 1m 단위가 의미 없다. 10m 로 끊는다.
+    if (navProfile === 'driving') return Math.round(m / 10) * 10 + 'm';
+    return Math.round(m) + 'm';
+  }
+
+  // ══════════════════════════════════════════
+  //  걸을 때와 탈 때의 차이는 여기서만 정한다
+  // ══════════════════════════════════════════
+  //  ※ 전에는 도보 값 하나로 둘 다 돌렸다. 그래서 '모드가 있으나 마나' 였다.
+  function trackOpts() {
+    return navProfile === 'driving'
+      // 차는 초당 17m 다. 5초 묵은 위치는 83m 뒤의 이야기다.
+      ? { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
+      : { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 };
+  }
+  function offRouteLimitM() { return navProfile === 'driving' ? 60 : 30; }
+  function arriveLimitM()   { return navProfile === 'driving' ? 60 : 30; }
+
+  function pointToSegmentDist(lat, lng, a, b) {
+    // 단순 거리 근사 (km)
+    const dx = b.lng - a.lng, dy = b.lat - a.lat;
+    if (dx === 0 && dy === 0) return getDistanceKm(lat, lng, a.lat, a.lng);
+    const t = Math.max(0, Math.min(1, ((lng - a.lng)*dx + (lat - a.lat)*dy) / (dx*dx + dy*dy)));
+    return getDistanceKm(lat, lng, a.lat + t*dy, a.lng + t*dx);
+  }
+
+  // ── GPS 추적 ──
+  //  ★ 위치가 올 때마다 하는 일은 하나뿐이다: **경로 위 내 자리를 갱신한다.**
+  //    나머지(도착·ETA·다음 회전·이탈)는 전부 그 값에서 나온다.
+  let offStreak = 0;        // 연달아 경로 밖으로 나온 횟수
+  let lastRerouteAt = 0;
+
+  function startTracking(dest) {
+    //  ★ 시험 위치일 때는 GPS 를 켜지 않는다. 켜면 진짜 내 자리로 튀어
+    //    청두를 보려던 게 서울로 돌아온다.
+    if (testPos) {
+      setNavFlag('routeLoading', false);
+      return;
+    }
+    //  ※ 여기서 미리 켜두지 않는다. 첫 위치가 올 때까지는
+    //    '경로 계산 중' 이 이미 떠 있으므로 두 번 말할 필요가 없다.
+    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    offStreak = 0;
+    lastRerouteAt = 0;
+
+    watchId = navigator.geolocation.watchPosition(pos => {
+      currentPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      if (pos.coords.heading != null) { currentHeading = pos.coords.heading; lastGpsHeadingAt = Date.now(); }
+      mapView.centerLat = currentPos.lat;
+      mapView.centerLng = currentPos.lng;
+      try { localStorage.setItem('ko_navi_last_pos', JSON.stringify(currentPos)); } catch {}
+      //  ★ 위치가 다시 왔으면 경고를 **반드시 내린다.**
+      //    안 내리면 지나간 오류가 계속 떠 있어 '늑대다' 가 된다
+      //    (번역 앱에서 똑같은 걸 겪었다).
+      setNavFlag('gpsLost', false);
+      setOffline(false);
+
+      if (routeCoords.length < 2) return;
+
+      // ── 경로 위 내 자리 ──
+      const pr = projectOnRoute(currentPos.lat, currentPos.lng);
+
+      //  ★★ 여기 구멍이 있었다.
+      //    경로에서 아무리 멀리 떨어져 있어도 진행률을 그대로 올렸다.
+      //    건물 안에서 켰는데 경로가 그 건물 근처를 두 번 지나가면,
+      //    가장 가까운 점이 **뒤쪽 구간이 아니라 앞쪽 구간**으로 잡혀
+      //    진행이 통째로 앞으로 튄다 — 회전 안내가 몇 개씩 건너뛴다.
+      //  ★ 경로에 붙어 있을 때만 진행으로 친다.
+      const ONROUTE_M = 25;
+      const onRoute = pr.offset <= ONROUTE_M;
+      if (onRoute && pr.along > alongNow) { alongNow = pr.along; projHint = pr.idx; }
+
+      //  ★ 떨어져 있으면 '경로 위 지금 자리' 까지 점선으로 잇는다.
+      //    처음엔 alongNow 가 0 이므로 자연히 **출발 지점**을 가리킨다.
+      //    가다가 벗어나면 그 시점의 자리를 가리킨다 — 규칙 하나로 둘 다 된다.
+      //  ★★ 여기 순서가 뒤집혀 있었다 — "점선 따라 0m" 의 원인.
+      //    거리를 재기 **전에** 안내 문구를 만들고 있었다. 그래서 늘 0m 였다.
+      //    ※ 값을 쓰는 쪽보다 값을 만드는 쪽이 먼저다. 당연한데 놓쳤다.
+      if (onRoute) {
+        linkTarget = null; linkDistM = 0;
+      } else {
+        linkTarget = pointAlongRoute(alongNow);
+        linkDistM  = linkTarget ? metersBetween(currentPos, linkTarget) : 0;
+      }
+
+      //  ※ 접근 구간에 글로 안내하던 것을 뺐다.
+      //    **노란 점선이 이미 같은 말을 하고 있다.** 글까지 띄우면
+      //    위쪽이 시끄러워지기만 한다. 그림으로 되는 건 글로 또 말하지 않는다.
+
+      //  ★ 남은 거리에 접근 구간을 더한다.
+      //    안 더하면 건물 안에서 '200m' 라고 떠 있다가
+      //    밖에 나오는 순간 '250m' 로 늘어난다. 늘어나는 남은 거리는
+      //    고장으로 보인다.
+      const remainM = Math.max(0, routeTotalM - alongNow) + linkDistM;
+
+      // ── 도착 ──
+      if (remainM < arriveLimitM()) {
+        navigator.geolocation.clearWatch(watchId); watchId = null;
+        // ★ 도착했으면 이어갈 것이 없다. 안 지우면 다시 열 때 또 안내한다.
+        try { localStorage.removeItem('navi.active'); } catch (e) {}
+        letScreenSleep();
+        speak('목적지에 도착했습니다');
+        document.getElementById('turn-arrow').textContent = '🏁';
+        document.getElementById('turn-dist').textContent = '도착!';
+        setTurnText(dest.name);
+        document.getElementById('nav-eta').textContent = '도착';
+        document.getElementById('nav-dist').textContent = '0.0';
+        return;
+      }
+
+      // ── 남은 거리·시간 ──
+      //  ★ 전에는 목적지까지 직선거리와 4km/h 고정이었다.
+      //    드라이브에서 5km 가 75분으로 떴다. 경로가 알려준 소요시간을
+      //    남은 비율로 환산한다. (교통정보가 반영된 값이다)
+      document.getElementById('nav-dist').textContent = (remainM / 1000).toFixed(1);
+      let etaSec;
+      if (routeDurationS > 0 && routeTotalM > 0) {
+        etaSec = routeDurationS * (remainM / routeTotalM);
+      } else {
+        etaSec = remainM / (navProfile === 'driving' ? 11.1 : 1.1);  // 40km/h · 4km/h
+      }
+      document.getElementById('nav-eta').textContent = Math.max(1, Math.round(etaSec / 60));
+
+      // ── 다음 회전 ──
+      //  ★ '창을 통과했는가' 로 판단하지 않는다. 지났으면 지난 것이다.
+      //    여러 개를 한 번에 지나쳤어도 while 이 따라잡는다.
+      let idx = currentStepIndex;
+      while (idx < routeSteps.length - 1 && stepAlong[idx + 1] <= alongNow + 5) idx++;
+      if (idx !== currentStepIndex) { currentStepIndex = idx; updateStepUI(routeSteps[idx]); }
+
+      const next = routeSteps[currentStepIndex + 1];
+      if (next) {
+        const dM = Math.max(0, (stepAlong[currentStepIndex + 1] || 0) - alongNow);
+        document.getElementById('turn-dist').textContent = fmtDist(dM);
+        announceTurn(next, dM / 1000);
+      }
+
+      // ── 경로 이탈 ──
+      //  ★ 문턱을 넘었다고 바로 다시 잡지 않는다.
+      //    도심 GPS 는 30~60m 씩 튄다. 전에는 스로틀이 없어서
+      //    고층 빌딩 아래를 지나면 재탐색이 계속 돌 수 있었다.
+      //    (rerouteTimer 변수가 있었지만 어디에서도 값을 넣지 않는 죽은 코드였다)
+      if (pr.offset > offRouteLimitM()) offStreak++; else offStreak = 0;
+      const sinceReroute = Date.now() - lastRerouteAt;
+      if (offStreak >= 2 && !isRerouting && sinceReroute > 15000) {
+        isRerouting = true;
+        lastRerouteAt = Date.now();
+        offStreak = 0;
+        document.getElementById('turn-dist').textContent = '재경로...';
+        speak('경로를 다시 탐색합니다');
+        fetchRoute(currentPos, dest).then(route => {
+          if (route && route.geometry && route.geometry.coordinates.length > 1) {
+            routeCoords = route.geometry.coordinates.map(([lng, lat]) => ({ lat, lng }));
+            routeSteps = route.legs[0].steps;
+            currentStepIndex = 0;
+            spokenDistBucket = null; spokenBucketVal = null;
+            buildRouteIndex(route.duration);
+            updateStepUI(routeSteps[0]);
+          }
+          isRerouting = false;
+        }).catch(() => { isRerouting = false; });
+      }
+    }, err => {
+      // ★ 조용히 멈추지 않는다. 화면이 얼어붙었는지 내가 멈춘 건지
+      //   사용자가 구분할 수 있어야 한다.
+      //  ★ 위치를 못 잡은 것과 '오프라인' 은 다른 일이다.
+      //    전에는 위치 오류에 setOffline(true) 를 걸어서
+      //    "캐시 경로 사용 중" 이 같이 떴다 — 사실이 아니었다.
+      console.warn(err.message);
+      setNavFlag('gpsLost', true);
+    }, trackOpts());
+  }
+
+  function stopNav() {
+    freeMap = false;
+    // 안내를 끝냈으면 이어갈 것이 없다
+    try { localStorage.removeItem('navi.active'); } catch (e) {}
+    letScreenSleep();
+    if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    stopRenderLoop();
+    isRerouting = false; spokenDistBucket = null; spokenBucketVal = null;
+    routeCum = []; stepAlong = []; alongNow = 0; projHint = 0;
+    routeTotalM = 0; routeDurationS = 0; offStreak = 0;
+    roadEdges = []; edgesFor = '';
+    navFlags = { gpsLost: false, routeLoading: false, routeFailed: false, offline: false };
+    linkTarget = null; linkDistM = 0;
+    renderNavStatus();
+    mapView.pitch = 0; pitchTarget = 0;
+    viewRot = 0;
+    routeCoords = []; routeSteps = []; selectedDest = null; currentHeading = null;
+  }
+
+  // ── 턴 안내 ──
+  //  ★ 칸을 넘어가면 우 → 좌로 흐르게 한다. 안 넘으면 가만히 둔다.
+  //    ※ 움직이는 것은 시선을 뺏는다. 필요할 때만 움직여야 한다.
+  //    ※ 속도를 글 길이에 맞춘다 — 길수록 오래. 고정 속도로 하면
+  //      짧은 글은 굼뜨고 긴 글은 놓친다.
+  function setTurnText(txt) {
+    const el = document.getElementById('turn-text');
+    if (!el) return;
+    el.classList.remove('run');
+    el.style.removeProperty('--shift');
+    el.style.removeProperty('animation-duration');
+    el.textContent = txt;
+    //  레이아웃이 잡힌 뒤에 재야 넘치는지 알 수 있다
+    requestAnimationFrame(() => {
+      const box = el.parentElement;
+      if (!box) return;
+      const over = el.scrollWidth - box.clientWidth;
+      if (over > 4) {
+        el.style.setProperty('--shift', (-over - 8) + 'px');
+        el.style.animationDuration = Math.max(4, (over + 8) / 28 + 3).toFixed(1) + 's';
+        el.classList.add('run');
+      }
+    });
+  }
+
+  function updateStepUI(step) {
+    if (!step) return;
+    document.getElementById('turn-arrow').textContent = getStepArrow(step);
+    setTurnText(getStepText(step));
+    document.getElementById('turn-dist').textContent = '--';
+    spokenDistBucket = null;   // 새 스텝 → 안내 버킷 초기화
+    spokenBucketVal = null;
+  }
+
+  // ── 음성 안내 (TTS) ──
+  function speak(text) {
+    if (!voiceOn || !('speechSynthesis' in window)) return;
+    try {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'ko-KR';
+      u.rate = 1.05;
+      u.volume = 1;
+      speechSynthesis.speak(u);
+    } catch(e) {}
+  }
+
+  // 회전 동작을 음성용 문구로
+  function getStepVoice(step) {
+    const m = (step && step.maneuver) || {};
+    const type = m.type, mod = m.modifier || '';
+    if (type === 'arrive') return '목적지에 도착했습니다';
+    if (type === 'depart') return '안내를 시작합니다';
+    // ★ 자동차에만 나오는 것들 (TMAP 자동차 회전코드 101~116)
+    if (type === 'ramp') {
+      if (mod === 'left')  return '왼쪽 고속도로 입구로 진입하세요';
+      if (mod === 'right') return '오른쪽 고속도로 입구로 진입하세요';
+      return '고속도로로 진입하세요';
+    }
+    if (type === 'exit') {
+      if (mod === 'left')  return '왼쪽 출구로 나가세요';
+      if (mod === 'right') return '오른쪽 출구로 나가세요';
+      return '출구로 나가세요';
+    }
+    if (mod === 'pturn') return 'P턴 하세요';
+    if (mod === 'left') return '좌회전하세요';
+    if (mod === 'right') return '우회전하세요';
+    if (mod === 'slight left') return '좌측 방향입니다';
+    if (mod === 'slight right') return '우측 방향입니다';
+    if (mod === 'sharp left') return '왼쪽으로 크게 도세요';
+    if (mod === 'sharp right') return '오른쪽으로 크게 도세요';
+    if (mod === 'uturn') return '유턴하세요';
+    return '직진하세요';
+  }
+
+  //  ══════════════════════════════════════════
+  //   거리별 사전 안내 — 차와 걸음은 필요한 거리가 다르다
+  //  ══════════════════════════════════════════
+  //  ★★ 전에는 둘 다 200m / 50m / 즉시였다.
+  //    시속 60km 면 200m 는 **12초**다. 차선을 바꿀 시간이 안 된다.
+  //    티맵·네이버가 1km 부터 알려주는 이유가 이것이다.
+  //  ★ 그리고 한 번 지나간 단계로 되돌아가지 않는다.
+  //    전에는 신호등에서 GPS 가 앞뒤로 흔들리면
+  //    "200미터 앞 좌회전" 이 다시 나왔다.
+  let spokenBucketVal = null;
+
+  function announceTurn(step, distKm) {
+    if (!step) return;
+    const m = distKm * 1000;
+    const car = navProfile === 'driving';
+    const marks = car ? [1000, 500, 300, 100, 40] : [200, 50, 20];
+
+    let n = null;
+    for (const mk of marks) if (m <= mk) n = mk;   // 가장 작은 해당 칸
+    if (n == null) return;
+    if (spokenBucketVal != null && n >= spokenBucketVal) return;  // 뒤로 안 간다
+    spokenBucketVal = n;
+    spokenDistBucket = String(n);
+
+    const action = getStepVoice(step);
+    const nowMark = car ? 40 : 20;
+    if (n <= nowMark)        speak(action);
+    else if (n >= 1000)      speak('1킬로미터 앞 ' + action);
+    else                     speak(n + '미터 앞 ' + action);
+  }
+
+  function getStepText(step) {
+    const m = (step && step.maneuver) || {};
+    const type = m.type, mod = m.modifier || '', name = step.name || '';
+    if (type === 'depart') return '출발';
+    if (type === 'arrive') return '목적지 도착';
+    if (type === 'ramp') return `고속도로 진입${name ? ' · '+name : ''}`;
+    if (type === 'exit') return `출구${name ? ' · '+name : ''}`;
+    if (mod === 'pturn') return 'P턴';
+    if (mod === 'left') return `좌회전${name ? ' · '+name : ''}`;
+    if (mod === 'right') return `우회전${name ? ' · '+name : ''}`;
+    if (mod === 'slight left') return `좌측 방향${name ? ' · '+name : ''}`;
+    if (mod === 'slight right') return `우측 방향${name ? ' · '+name : ''}`;
+    if (mod === 'uturn') return 'U턴';
+    return name || '직진';
+  }
+  function getStepArrow(step) {
+    const m = (step && step.maneuver) || {};
+    const type = m.type, mod = m.modifier || '';
+    if (type === 'arrive') return '🏁';
+    if (type === 'ramp')   return mod === 'left' ? '↰' : '↱';
+    if (type === 'exit')   return mod === 'left' ? '↖' : '↗';
+    if (mod === 'pturn')   return '↺';
+    if (mod === 'left') return '←'; if (mod === 'right') return '→';
+    if (mod === 'slight left') return '↖'; if (mod === 'slight right') return '↗';
+    if (mod === 'uturn') return '↩';
+    return '↑';
+  }
+
+  // ── 로딩 ──
+  function showLoading(t) { document.getElementById('loading-text').textContent = t; document.getElementById('loading-overlay').classList.remove('hidden'); }
+  function hideLoading() { document.getElementById('loading-overlay').classList.add('hidden'); }
+
+  // ── 유틸 ──
+  function getDistanceKm(lat1, lng1, lat2, lng2) {
+    const R = 6371, dLat = (lat2-lat1)*Math.PI/180, dLng = (lng2-lng1)*Math.PI/180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  // ── 키보드 ──
+  document.addEventListener('keydown', e => {
+    startCompass();   // 첫 조작에서 나침반 권한을 얻는다 (자동 호출은 막혀 있다)
+    const active = document.querySelector('.screen.active')?.id;
+
+    //  ★ 묻는 창이 떠 있으면 그것부터. 뒤에 있는 화면이 반응하면 안 된다.
+    if (!document.getElementById('confirm-back').classList.contains('hidden')) {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        confirmPick = e.key === 'ArrowRight' ? 1 : 0; paintConfirm();
+      } else if (e.key === 'Enter') { doConfirm(); }
+      else if (e.key === 'Escape') { closeConfirm(); }
+      e.preventDefault();
+      return;
+    }
+
+    if (active === 'screen-home') {
+      //  ★★ "네 번 내려갔다가 올라오려면 또 네 번" — 말이 안 되는 조작이었다.
+      //    끝에서 멈추지 말고 반대편으로 넘어가게 한다.
+      //    맨 아래에서 ↓ 하면 맨 위로, 맨 위에서 ↑ 하면 맨 아래로.
+      //    ※ 목록이 길수록 되돌아오는 길이 짧아야 한다.
+      if (e.key === 'ArrowDown') {
+        const n = homeFocusables.length;
+        focusHome(n ? (focusIndex + 1) % n : 0); e.preventDefault();
+      }
+      else if (e.key === 'ArrowUp') {
+        const n = homeFocusables.length;
+        focusHome(n ? (focusIndex - 1 + n) % n : 0); e.preventDefault();
+      }
+      //  ★ → 하나로 담고 지운다.
+      //    담은 것이면 지울지 묻고, 아니면 담는다. 최근이든 기본이든 같다.
+      //    ※ 조작이 자리마다 다르면 외울 게 늘어난다. 뜻이 같으면 키도 같아야 한다.
+      //  ★ 탭 줄에 커서가 있으면 ←→ 는 나라 바꾸기다.
+      //    담을 것도 지울 것도 없는 자리라 뜻이 겹치지 않는다.
+      //    ※ 아래 두 가지(담기·최근 지우기)보다 **먼저** 걸러야 한다.
+      //      순서가 뒤바뀌면 탭에서 → 를 눌렀을 때 엉뚱한 것이 담긴다.
+      else if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft')
+               && homeFocusables[focusIndex]
+               && homeFocusables[focusIndex].id === 'fav-tabs') {
+        favTab = (e.key === 'ArrowRight') ? 'cn' : 'kr';
+        buildHome();
+        //  ※ 다시 그린 뒤 커서를 탭 줄에 그대로 둔다. 목록 길이가 바뀌어
+        //    번호로 되찾으면 딴 데로 튄다. 무엇인지로 찾는다.
+        const back = homeFocusables.findIndex(x => x && x.id === 'fav-tabs');
+        focusHome(back >= 0 ? back : focusIndex);
+        e.preventDefault();
+      }
+      else if (e.key === 'ArrowRight') {
+        const el = homeFocusables[focusIndex];
+        if (el && el.dataset && el.dataset.dest) {
+          if (el.dataset.mine === '1') {
+            askRemove(el.dataset.name, 'fav');
+          } else {
+            let d = null;
+            try { d = JSON.parse(el.dataset.dest); } catch (err) {}
+            if (d) {
+              addFav(d);
+              buildHome();
+              const idx = homeFocusables.findIndex(x => x.dataset && x.dataset.name === d.name);
+              focusHome(idx >= 0 ? idx : focusIndex);
+            }
+          }
+        }
+        e.preventDefault();
+      }
+      //  ★ ← 는 최근 목록에서 지우기. 한 키에 한 가지 뜻만 준다.
+      //      → 즐겨찾기 담기/지우기 · ← 최근 목록에서 지우기
+      else if (e.key === 'ArrowLeft') {
+        const el = homeFocusables[focusIndex];
+        if (el && el.dataset && el.dataset.recent === '1') {
+          askRemove(el.dataset.name, 'recent');
+        }
+        e.preventDefault();
+      }
+      else if (e.key === 'Enter') {
+        //  ★ 전에는 여기서 setProfile 을 직접 부르고, 버튼에는 click 처리기도
+        //    따로 달려 있었다. **같은 일을 두 갈래로** 하고 있었던 것이다.
+        //    focusIndex 와 실제 DOM 포커스가 어긋나면 서로 다른 모드를 눌러
+        //    결과가 오락가락한다.
+        //  ※ 길이 하나면 어긋날 수가 없다. 클릭 한 갈래로 모은다.
+        if (homeFocusables[focusIndex]) homeFocusables[focusIndex].click();
+        e.preventDefault();
+      }
+    }
+
+    if (active === 'screen-search-input') {
+      const items = document.querySelectorAll('.search-result-item');
+      if (e.key === 'ArrowDown') { focusSearchResult(Math.min(searchFocusIndex+1, items.length-1)); e.preventDefault(); }
+      else if (e.key === 'ArrowUp') {
+        if (searchFocusIndex === 0) document.getElementById('search-input').focus();
+        else focusSearchResult(searchFocusIndex-1);
+        e.preventDefault();
+      }
+      else if (e.key === 'Enter' && searchResults[searchFocusIndex]) {
+        selectSearchResult(searchResults[searchFocusIndex]); e.preventDefault();
+      }
+      //  ★ → 로 즐겨찾기에 담는다. 담는 건 되돌리기 쉬우니 확인을 묻지 않는다.
+      //    (지울 때는 두 번 눌러야 한다 — 그건 되돌릴 길이 없으니까)
+      else if (e.key === 'ArrowRight' && searchResults[searchFocusIndex]) {
+        const d = searchResults[searchFocusIndex];
+        addFav(d);
+        const el = document.getElementById('search-status');
+        el.className = 'search-empty';
+        el.textContent = `★ ${d.name} — 즐겨찾기에 담았습니다`;
+        e.preventDefault();
+      }
+      else if (e.key === 'Escape') { closeSearch(); e.preventDefault(); }
+    }
+
+    if (active === 'screen-nav') {
+      if (e.key === 'Escape' || e.key === 'ArrowLeft') { stopNav(); showScreen('screen-home'); focusHome(focusIndex); e.preventDefault(); }
+      // ★ 안경에는 키보드가 없다. 방향키와 Enter 만 들어온다.
+      //   전에는 줌이 +/- 에 걸려 있어서 안경에서는 아예 못 썼다.
+      //   걸을 때 시점보다 줌이 훨씬 자주 필요하므로 위/아래를 줌에 준다.
+      else if (e.key === 'ArrowUp')   { zoomIn();  e.preventDefault(); }
+      else if (e.key === 'ArrowDown') { zoomOut(); e.preventDefault(); }
+      // 시점 전환(위에서 보기 ↔ 비스듬히)은 핀치로
+      else if (e.key === 'Enter') {
+        pitchTarget = pitchTarget > 0.5 ? 0 : 1;
+        e.preventDefault();
+      }
+      else if (e.key === '+' || e.key === '=') { zoomIn(); e.preventDefault(); }
+      else if (e.key === '-') { zoomOut(); e.preventDefault(); }
+      // 음성 안내 on/off
+      else if (e.key === 'ArrowRight') {
+        voiceOn = !voiceOn;
+        if (!voiceOn && 'speechSynthesis' in window) speechSynthesis.cancel();
+        setTurnText(voiceOn ? '🔊 음성 안내 켜짐' : '🔇 음성 안내 꺼짐');
+        if (voiceOn) speak('음성 안내를 켭니다');
+        setTimeout(() => {
+          if (routeSteps[currentStepIndex]) updateStepUI(routeSteps[currentStepIndex]);
+        }, 1500);
+        e.preventDefault();
+      }
+    }
+  });
+
+  // ── 검색 화면 ──
+  function openSearch() {
+    showScreen('screen-search-input');
+    setTimeout(() => document.getElementById('search-input').focus(), 50);
+  }
+  function closeSearch() {
+    //  ★★ 여기서 목록을 다시 만들지 않아서, 검색 화면에서 담은 즐겨찾기가
+    //    홈에 안 나왔다. 화면만 바꾸고 내용은 예전 것 그대로였던 것이다.
+    //  ※ 화면을 되돌릴 때는 그 사이 바뀐 것이 있는지 생각한다.
+    showScreen('screen-home');
+    buildHome();
+    focusHome(0);
+  }
+
+  //  ★ 지금 서 있는 자리를 담는다.
+  //    이름은 좌표를 되짚어(역지오코딩) 주소로 만든다 —
+  //    '현재 위치 3' 같은 이름은 나중에 어디였는지 알 수가 없다.
+  //  ※ 되짚기에 실패해도 담는 것 자체는 성공시킨다. 이름만 좌표가 된다.
+  //    이름을 못 얻었다고 저장을 포기하면 정작 필요한 걸 잃는다.
+  async function reverseName(lat, lng) {
+    try {
+      if (currentCountry() === 'cn') {
+        const g = wgs84ToGcj02(lat, lng);
+        const d = await jsonp(`https://apis.map.qq.com/ws/geocoder/v1/?location=${g.lat},${g.lng}&key=${TENCENT_KEY}`);
+        if (d.status === 0 && d.result) {
+          const f = d.result.formatted_addresses || {};
+          return { name: f.recommend || d.result.address || '', addr: d.result.address || '' };
+        }
+      } else {
+        const u = 'https://apis.openapi.sk.com/tmap/geo/reversegeocoding?version=1&format=json'
+                + `&coordType=WGS84GEO&addressType=A10&lat=${lat}&lon=${lng}`;
+        const r = await fetch(u, { headers: { appKey: TMAP_KEY } });
+        const t = await r.text();
+        if (r.ok && t.trim()) {
+          const d = JSON.parse(t);
+          const a = d.addressInfo || {};
+          const road = [a.city_do, a.gu_gun, a.roadName, a.buildingIndex].filter(Boolean).join(' ');
+          return { name: a.buildingName || road || '', addr: a.fullAddress || road || '' };
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  //  ══════════════════════════════════════════
+  //   지울지 묻는 창
+  //  ══════════════════════════════════════════
+  //  ★ 되돌릴 수 없는 일은 반드시 한 번 묻는다.
+  //    처음엔 '→ 두 번 누르기' 로 했는데, 무엇을 지우는지 안 보이고
+  //    실수로 두 번 눌릴 수도 있다. 이름을 보여주고 명확히 고르게 한다.
+  //  ※ 기본 선택은 '취소' 다. 잘못 눌렀을 때 아무 일도 안 일어나는 쪽이 기본이어야 한다.
+  let confirmTarget = null;
+  let confirmKind = 'fav';                // 'fav' = 즐겨찾기, 'recent' = 최근 목록
+  let confirmPick = 0;                    // 0 = 취소, 1 = 지우기
+
+  function paintConfirm() {
+    const no = document.getElementById('confirm-no');
+    const yes = document.getElementById('confirm-yes');
+    no.classList.toggle('focused', confirmPick === 0);
+    yes.classList.toggle('focused', confirmPick === 1);
+    (confirmPick === 0 ? no : yes).focus();
+  }
+  function askRemove(name, kind) {
+    confirmTarget = name;
+    confirmKind = kind;
+    confirmPick = 0;
+    const where = kind === 'recent' ? '최근 목록' : '즐겨찾기';
+    document.getElementById('confirm-msg').textContent = `${name}\n${where}에서 지울까요?`;
+    document.getElementById('confirm-msg').style.whiteSpace = 'pre-line';
+    document.getElementById('confirm-back').classList.remove('hidden');
+    paintConfirm();
+  }
+  function closeConfirm() {
+    confirmTarget = null;
+    document.getElementById('confirm-back').classList.add('hidden');
+    focusHome(Math.min(focusIndex, homeFocusables.length - 1));
+  }
+  function doConfirm() {
+    if (confirmPick === 1 && confirmTarget) {
+      if (confirmKind === 'recent') removeRecent(confirmTarget);
+      else removeFav(confirmTarget);
+      const keep = focusIndex;
+      confirmTarget = null;
+      document.getElementById('confirm-back').classList.add('hidden');
+      buildHome();
+      focusHome(Math.min(keep, homeFocusables.length - 1));
+      return;
+    }
+    closeConfirm();
+  }
+
+  async function saveHereAsFav() {
+    const box = document.getElementById('here-box');
+    const label = box && box.querySelector('.label');
+    if (!currentPos) {
+      if (label) label.innerHTML = '현재 위치 <span style="color:#ffd27a">· 위치를 아직 못 잡았습니다</span>';
+      return;
+    }
+    const got = await reverseName(currentPos.lat, currentPos.lng);
+    const stamp = new Date().toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const name = (got && got.name) ? got.name : `현재 위치 ${stamp}`;
+    addFav({ name, addr: (got && got.addr) || `${currentPos.lat.toFixed(5)}, ${currentPos.lng.toFixed(5)}`,
+             lat: currentPos.lat, lng: currentPos.lng });
+    buildHome();
+    focusHome(0);
+    const b2 = document.getElementById('here-box');
+    const l2 = b2 && b2.querySelector('.label');
+    if (l2) {
+      l2.innerHTML = `현재 위치 <span style="color:#8dffab">· ★ ${name} 담았습니다</span>`;
+      setTimeout(() => {
+        const l3 = document.getElementById('here-box');
+        if (l3) l3.querySelector('.label').innerHTML = '현재 위치 <span style="color:#7dd8ff">· Enter 로 즐겨찾기</span>';
+      }, 2500);
+    }
+  }
+  document.getElementById('here-box').addEventListener('click', saveHereAsFav);
+
+  document.getElementById('search-back-btn').addEventListener('click', closeSearch);
+  document.getElementById('back-btn').addEventListener('click', () => { stopNav(); showScreen('screen-home'); buildHome(); focusHome(0); });
+
+  // ══════════════════════════════════════════
+  //  폰에서 보낸 목적지 받기
+  //  · 앱이 켜질 때 한 번 확인하고, 대기 중에는 5초마다 다시 본다.
+  //  · 안내 중에는 확인하지 않는다 (경로가 중간에 바뀌면 곤란하다).
+  //  · 같은 목적지를 두 번 시작하지 않도록 보낸 시각으로 구분한다.
+  // ══════════════════════════════════════════
+  let lastDestAt = 0;
+  try { lastDestAt = parseInt(localStorage.getItem('navi.destAt')) || 0; } catch (e) {}
+
+  function checkRelay() {
+    // ★ 안내 중에도 새 목적지가 오면 바로 그리로 바꾼다.
+    //   전에는 홈 화면일 때만 봤다. 그러면 안내가 한 번 시작된 뒤로는
+    //   폰에서 공유해도 안경이 통째로 무시했다 — 목적지를 바꾸려면
+    //   왼쪽 스와이프로 홈에 나갔다 와야 했다.
+    //   목적지를 보내는 것 자체가 "여기로 가겠다" 는 뜻이므로 바로 따른다.
+    //
+    //   다만 검색 화면에서는 건드리지 않는다. 사용자가 지금 직접
+    //   고르는 중인데 화면이 튀면 곤란하다.
+    const search = document.getElementById('screen-search-input');
+    if (search && search.classList.contains('active')) return;
+
+    getJson(DEST_RELAY + '/dest', { cache: 'no-store' })
+      .then(d => {
+        const dest = d && d.dest;
+        //  ★ 닿았다는 사실 자체를 남긴다. 목적지가 없어도 "닿았다" 는 정보다.
+        //    이걸 안 보여줘서 "안경이 못 물어보는 중" 과 "물어봤는데 없음" 을
+        //    구분할 수 없었다. 그 둘은 고치는 법이 전혀 다르다.
+        showRelay(true, dest);
+        if (!dest || !dest.at || dest.at <= lastDestAt) return;
+        lastDestAt = dest.at;
+        try { localStorage.setItem('navi.destAt', String(dest.at)); } catch (e) {}
+        startNav({
+          name: dest.name || '목적지',
+          addr: dest.addr || '',
+          lat: dest.lat, lng: dest.lng,
+          icon: '📲',
+        });
+      })
+      //  ★ 앱은 계속 돌게 두되, **왜 안 되는지는 화면에 남긴다.**
+      //    조용히 삼키면 다음에 또 멀쩡한 곳을 판다.
+      .catch(e => showRelay(false, null, (e && e.message) || String(e)));
+  }
+
+  //  릴레이 상태 한 줄. 안경에서 바로 읽을 수 있어야 한다.
+  //  ※ 더하기 화면이라 여러 색을 쓰지 않는다. 못 닿았을 때만 눈에 띄게 한다.
+  function showRelay(ok, dest, why) {
+    const el = document.getElementById('relay-state');
+    if (!el) return;
+    const hhmm = t => new Date(t).toTimeString().slice(0, 8);
+    if (!ok) {
+      //  ※ getJson 이 이미 '서버에 못 닿음' 같은 말을 준다. 앞에 또 붙이면
+      //    "못 닿음 — 못 닿음" 이 된다. 온 말을 그대로 쓴다.
+      el.textContent = '📡 ' + (why || '서버에 못 닿음');
+      el.style.color = '#ffb95e';       // 흰색 다음으로 눈에 띄되 빨강은 위험용으로 남긴다
+      return;
+    }
+    el.style.color = '#7a8a99';
+    el.textContent = dest && dest.at
+      ? '📡 ' + hhmm(Date.now()) + ' 확인 · 마지막 목적지 ' + (dest.name || '?') + ' (' + hhmm(dest.at) + ')'
+      : '📡 ' + hhmm(Date.now()) + ' 확인 · 받은 목적지 없음';
+  }
+
+  //  ══════════════════════════════════════════
+  //   ★★ 저장본으로 열렸으면 스스로 낫는다
+  //  ══════════════════════════════════════════
+  //   문지기(index.html)는 GitHub 에서 앱을 못 받으면 **예전에 저장해둔 사본**으로 연다.
+  //   길찾기 앱이 인터넷 없다고 아예 안 켜지면 곤란하니 넣어둔 대비책이다.
+  //
+  //   ★ 그런데 그 상태로 **머물러 있었다.** 망이 돌아와도 옛 판 그대로였고,
+  //     릴레이도 못 부르니 공유해도 아무 일이 없었다. 2026-08-28 밤을 이걸로 버렸다.
+  //   ※ 대비책은 '버티는 것' 까지만 하고, 조건이 나아지면 **스스로 빠져나와야** 한다.
+  //     빠져나올 길이 없는 대비책은 고장을 숨긴다.
+  //
+  //   판 번호 옆에 ' · 저장본' 이 붙어 있으면 그 상태다. 1분마다 원본을 다시 받아보고,
+  //   받아지면 화면을 다시 연다 (그러면 문지기가 새 판을 가져온다).
+  //   ※ 안내 중에는 다시 열지 않는다. 길 가는 도중에 화면이 끊기면 안 된다.
+  (function healFromCache() {
+    const tag = document.getElementById('build-tag');
+    if (!tag || tag.textContent.indexOf('저장본') < 0) return;
+
+    const APP = 'https://majaeng.github.io/Navi/app.html';
+    setInterval(function () {
+      const navOpen = document.getElementById('screen-nav');
+      if (navOpen && navOpen.classList.contains('active')) return;   // 안내 중이면 건드리지 않는다
+      fetch(APP + '?t=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.text() : null; })
+        .then(function (html) {
+          //  ※ 받아졌는지만 보지 않는다. 내용이 앱인지까지 본다 —
+          //    공유기 로그인 화면 같은 것이 200 으로 올 수 있다.
+          if (!html || html.indexOf('<script') < 0) return;
+          location.reload();
+        })
+        .catch(function () {});   // 아직 망이 안 돌아온 것뿐이다. 다음 차례에 다시 본다.
+    }, 60000);
+  })();
+
+  // ── 시작 ──
+  seedFavsOnce();
+  buildHome();
+  getLocation();
+  startCompass();
+
+  // ★ 안내 중에 앱이 닫혔다면 그대로 이어간다.
+  //   30분이 지났으면 이어가지 않는다 — 그때는 이미 다른 곳에 있을 것이다.
+  //   ※ 위치를 먼저 잡아야 경로를 계산할 수 있어서 조금 기다린다.
+  (function resumeNav() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem('navi.active') || 'null'); } catch (e) {}
+    if (!saved || !saved.dest || !saved.at) return;
+    if (Date.now() - saved.at > 30 * 60 * 1000) {
+      try { localStorage.removeItem('navi.active'); } catch (e) {}
+      return;
+    }
+    let waited = 0;
+    const t = setInterval(() => {
+      waited += 300;
+      if (currentPos) { clearInterval(t); startNav(saved.dest); }
+      else if (waited >= 9000) { clearInterval(t); startNav(saved.dest); }  // 위치가 늦어도 시도한다
+    }, 300);
+  })();
+
+  //  홈의 '지도 보기'
+  (function wireMapBtn() {
+    const b = document.getElementById('btn-map');
+    if (b) b.addEventListener('click', () => startMap());
+  })();
+
+  //  ★ 열자마자 지도 (2026-08-30 사용자 요구: 첫 화면은 지도).
+  //    안내 이어가기(navi.active)가 있으면 그쪽이 우선이다.
+  //    위치가 잡히면 바로, 6초 넘게 안 잡히면 마지막/기본 위치로라도 연다.
+  (function autoMap() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem('navi.active') || 'null'); } catch (e) {}
+    if (saved && saved.dest && saved.at && Date.now() - saved.at <= 30 * 60 * 1000) return;
+    let waited = 0;
+    const t = setInterval(() => {
+      waited += 300;
+      if (selectedDest || freeMap) { clearInterval(t); return; }   // 이미 뭔가 하는 중
+      if (currentPos) { clearInterval(t); startMap(); }
+      else if (waited >= 6000) { clearInterval(t); fallbackPos(); startMap(); }
+    }, 300);
+  })();
+
+  checkRelay();
+  setInterval(checkRelay, 5000);
+</script>
+</body>
+</html>
