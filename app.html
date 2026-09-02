@@ -296,6 +296,8 @@
       transition: opacity 400ms;
     }
     .nav-help.hidden { opacity: 0; }
+    .turn-banner.hidden { display: none; }
+    .nav-card.hidden { display: none; }
 
     /* 지울지 묻는 창 */
     .confirm-back {
@@ -348,7 +350,7 @@
   <div class="title">KO-<span>Navi</span></div>
   <!-- ★ 판 번호. 지금 안경에 떠 있는 게 몇 번째 판인지 눈으로 확인하는 용도다.
        숫자가 안 바뀌면 새 파일이 안 실행되고 있는 것이다 — 코드를 파기 전에 여기부터 본다. -->
-  <div class="build-tag" id="build-tag">v48 · 08-28</div>
+  <div class="build-tag" id="build-tag">v49 · 08-30</div>
 
   <!-- ★ 현재 위치를 즐겨찾기에 담을 수 있어야 한다.
        지금 서 있는 곳(숙소 정문·사무실 입구)은 주소로 검색해서 나오는 자리와
@@ -359,6 +361,10 @@
        ★ 칸마다 나눠 담지 않고 **화면 전체를 하나로 흐르게** 한다.
          고른 항목이 보이도록 이 판을 통째로 밀어 올린다. -->
   <div class="home-scroll" id="home-scroll">
+  <!-- ★ 지도 보기 (2026-08-30 사용자 요구). 검색도 즐겨찾기도 없이
+       '지금 내 자리 지도' 만 보고 싶을 때가 있다 — 첫 화면도 이제 지도다.
+       홈은 목적지를 고를 때만 들르는 곳이 됐다. -->
+  <button class="mode-btn focusable" id="btn-map" tabindex="0" style="width:100%">🗺 지도 보기</button>
   <div class="location-box focusable" id="here-box" tabindex="0" role="button">
     <div class="label">현재 위치 <span style="color:#7dd8ff">· Enter 로 즐겨찾기</span></div>
     <div class="value" id="current-location">위치 확인 중...</div>
@@ -1801,6 +1807,7 @@
 
     //  ★ 커서가 도는 순서 = 화면에 보이는 순서. 어긋나면 어지럽다.
     homeFocusables = [
+      document.getElementById('btn-map'),
       document.getElementById('here-box'),
       document.getElementById('btn-foot'),
       document.getElementById('btn-drive'),
@@ -2117,7 +2124,41 @@
     if (document.visibilityState === 'visible' && watchId !== null && !wakeLock) keepScreenOn();
   });
 
+  //  ══════════════════════════════════════════
+  //   자유 지도 — 목적지 없이 내 자리만 (2026-08-30)
+  //  ══════════════════════════════════════════
+  //  ★ 첫 화면이 이제 이것이다. 검색·즐겨찾기 없이 지도부터 보인다.
+  //    안내 화면(screen-nav)을 그대로 빌려 쓰되, 경로·턴 배너·정보 카드를 뺀다.
+  //    ← 로 홈(검색·즐겨찾기)에 들어가고, 홈의 '지도 보기' 로 돌아온다.
+  let freeMap = false;
+  function startMap() {
+    freeMap = true;
+    keepScreenOn();
+    selectedDest = null;
+    routeCoords = []; routeSteps = [];
+    const tb = document.getElementById('turn-banner');
+    if (tb) tb.classList.add('hidden');
+    const card = document.querySelector('.nav-card');
+    if (card) card.classList.add('hidden');
+    showScreen('screen-nav');
+    navFlags = { gpsLost: false, routeLoading: false, routeFailed: false, offline: false };
+    renderNavStatus();
+    if (!currentPos) fallbackPos();
+    mapView.centerLat = currentPos.lat;
+    mapView.centerLng = currentPos.lng;
+    mapView.zoom = 17; zoomTarget = 17;   // 안내(18)보다 한 단계 넓게 — 둘러보는 용도
+    mapView.pitch = 0; pitchTarget = 0;
+    startRenderLoop();
+    startTracking(null);   // 경로가 없으면 추적은 '내 자리 따라가기' 만 한다
+  }
+
   function startNav(dest) {
+    //  자유 지도에서 숨겼던 것들을 되살린다
+    freeMap = false;
+    const tb0 = document.getElementById('turn-banner');
+    if (tb0) tb0.classList.remove('hidden');
+    const card0 = document.querySelector('.nav-card');
+    if (card0) card0.classList.remove('hidden');
     saveRecentDest(dest);
     keepScreenOn();
     // ★ 안내 중이던 목적지를 남겨둔다.
@@ -3248,6 +3289,7 @@
   }
 
   function stopNav() {
+    freeMap = false;
     // 안내를 끝냈으면 이어갈 것이 없다
     try { localStorage.removeItem('navi.active'); } catch (e) {}
     letScreenSleep();
@@ -3785,6 +3827,28 @@
       waited += 300;
       if (currentPos) { clearInterval(t); startNav(saved.dest); }
       else if (waited >= 9000) { clearInterval(t); startNav(saved.dest); }  // 위치가 늦어도 시도한다
+    }, 300);
+  })();
+
+  //  홈의 '지도 보기'
+  (function wireMapBtn() {
+    const b = document.getElementById('btn-map');
+    if (b) b.addEventListener('click', () => startMap());
+  })();
+
+  //  ★ 열자마자 지도 (2026-08-30 사용자 요구: 첫 화면은 지도).
+  //    안내 이어가기(navi.active)가 있으면 그쪽이 우선이다.
+  //    위치가 잡히면 바로, 6초 넘게 안 잡히면 마지막/기본 위치로라도 연다.
+  (function autoMap() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem('navi.active') || 'null'); } catch (e) {}
+    if (saved && saved.dest && saved.at && Date.now() - saved.at <= 30 * 60 * 1000) return;
+    let waited = 0;
+    const t = setInterval(() => {
+      waited += 300;
+      if (selectedDest || freeMap) { clearInterval(t); return; }   // 이미 뭔가 하는 중
+      if (currentPos) { clearInterval(t); startMap(); }
+      else if (waited >= 6000) { clearInterval(t); fallbackPos(); startMap(); }
     }, 300);
   })();
 
